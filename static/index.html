@@ -1,0 +1,345 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Shopify → e-Arşiv Fatura</title>
+<style>
+  :root {
+    --zemin: #f6f7f9; --kart: #ffffff; --metin: #1a1d21; --soluk: #6b7280;
+    --cizgi: #e3e6ea; --vurgu: #2563eb; --iyi: #15803d; --iyi-zemin: #dcfce7;
+    --uyari: #b45309; --uyari-zemin: #fef3c7; --hata: #b91c1c; --hata-zemin: #fee2e2;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --zemin: #0f1115; --kart: #181b21; --metin: #e8eaed; --soluk: #9aa1ac;
+      --cizgi: #2a2f38; --vurgu: #60a5fa; --iyi: #4ade80; --iyi-zemin: #14311f;
+      --uyari: #fbbf24; --uyari-zemin: #3a2c0a; --hata: #f87171; --hata-zemin: #3b1416;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 24px; background: var(--zemin); color: var(--metin);
+    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  .sarmal { max-width: 1180px; margin: 0 auto; }
+  h1 { font-size: 21px; margin: 0 0 4px; }
+  .altbaslik { color: var(--soluk); font-size: 13px; margin-bottom: 20px; }
+  .kart {
+    background: var(--kart); border: 1px solid var(--cizgi); border-radius: 12px;
+    padding: 18px; margin-bottom: 16px;
+  }
+  .satir { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  button {
+    font: inherit; font-weight: 550; padding: 9px 16px; border-radius: 8px;
+    border: 1px solid var(--cizgi); background: var(--kart); color: var(--metin);
+    cursor: pointer;
+  }
+  button:hover:not(:disabled) { border-color: var(--vurgu); }
+  button.birincil { background: var(--vurgu); color: #fff; border-color: var(--vurgu); }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  input, select {
+    font: inherit; padding: 7px 10px; border-radius: 7px;
+    border: 1px solid var(--cizgi); background: var(--zemin); color: var(--metin);
+  }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th {
+    text-align: left; font-size: 12px; text-transform: uppercase;
+    letter-spacing: .04em; color: var(--soluk); font-weight: 600;
+    padding: 8px 10px; border-bottom: 1px solid var(--cizgi);
+  }
+  td { padding: 10px; border-bottom: 1px solid var(--cizgi); vertical-align: top; }
+  tr.secili td { background: color-mix(in srgb, var(--vurgu) 7%, transparent); }
+  .sag { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .rozet {
+    display: inline-block; font-size: 11px; font-weight: 600; padding: 2px 8px;
+    border-radius: 999px; margin: 2px 4px 2px 0;
+  }
+  .r-uyari { background: var(--uyari-zemin); color: var(--uyari); }
+  .r-iyi { background: var(--iyi-zemin); color: var(--iyi); }
+  .r-hata { background: var(--hata-zemin); color: var(--hata); }
+  .kalem { color: var(--soluk); font-size: 13px; }
+  .duzenle { margin-top: 8px; display: none; gap: 8px; flex-wrap: wrap; }
+  .duzenle.acik { display: flex; }
+  .duzenle label { font-size: 11px; color: var(--soluk); display: block; }
+  .duzenle input { width: 150px; }
+  .baglanti { color: var(--vurgu); cursor: pointer; font-size: 12px; }
+  .bos { text-align: center; color: var(--soluk); padding: 36px; }
+  .mesaj { padding: 11px 14px; border-radius: 8px; margin-bottom: 12px; font-size: 14px; }
+  .m-iyi { background: var(--iyi-zemin); color: var(--iyi); }
+  .m-hata { background: var(--hata-zemin); color: var(--hata); }
+  .m-uyari { background: var(--uyari-zemin); color: var(--uyari); }
+  .adim { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .adim-no {
+    width: 24px; height: 24px; border-radius: 50%; background: var(--vurgu);
+    color: #fff; display: grid; place-items: center; font-size: 12px; font-weight: 700;
+    flex-shrink: 0;
+  }
+</style>
+</head>
+<body>
+<div class="sarmal">
+  <h1>Shopify → e-Arşiv Fatura</h1>
+  <div class="altbaslik" id="altbaslik">Yükleniyor…</div>
+
+  <div id="mesajlar"></div>
+
+  <div class="kart">
+    <div class="satir">
+      <div class="adim-no">1</div>
+      <select id="tetikleyici">
+        <option value="fulfilled">Kargolanmış siparişler</option>
+        <option value="paid">Ödemesi alınmış siparişler</option>
+      </select>
+      <button class="birincil" id="getir">Siparişleri Getir</button>
+      <span id="ozet" class="kalem"></span>
+    </div>
+  </div>
+
+  <div class="kart" id="tablo-kart" style="display:none">
+    <div class="satir" style="margin-bottom:12px">
+      <label style="font-size:13px"><input type="checkbox" id="hepsi"> Tümünü seç</label>
+      <span style="flex:1"></span>
+      <span id="secim-ozet" class="kalem"></span>
+    </div>
+    <table>
+      <thead>
+        <tr>
+          <th style="width:34px"></th>
+          <th>Sipariş</th>
+          <th>Alıcı</th>
+          <th>Kalemler</th>
+          <th class="sag">Matrah</th>
+          <th class="sag">KDV</th>
+          <th class="sag">Toplam</th>
+        </tr>
+      </thead>
+      <tbody id="govde"></tbody>
+    </table>
+  </div>
+
+  <div class="kart" id="islem-kart" style="display:none">
+    <div class="adim" style="margin-bottom:14px">
+      <div class="adim-no">2</div>
+      <button class="birincil" id="taslak">Seçilenlerin Taslağını Oluştur</button>
+      <span class="kalem">GİB portalında taslak oluşur — SMS gerekmez, geri alınabilir.</span>
+    </div>
+    <div class="adim">
+      <div class="adim-no">3</div>
+      <button id="sms">SMS Kodu İste</button>
+      <input id="kod" placeholder="SMS kodu" style="width:130px" disabled>
+      <button class="birincil" id="onayla" disabled>Tümünü Onayla</button>
+      <span class="kalem">Tek kod ile tüm taslaklar imzalanır.</span>
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = (s) => document.querySelector(s);
+let faturalar = [];
+const secili = new Set();
+const duzeltmeler = {};
+
+function mesaj(metin, tur = "iyi") {
+  const kutu = document.createElement("div");
+  kutu.className = "mesaj m-" + tur;
+  kutu.textContent = metin;
+  $("#mesajlar").prepend(kutu);
+  if (tur === "iyi") setTimeout(() => kutu.remove(), 8000);
+}
+
+async function cagir(yol, secenekler = {}) {
+  const cevap = await fetch(yol, {
+    headers: { "Content-Type": "application/json" }, ...secenekler,
+  });
+  const veri = await cevap.json().catch(() => ({}));
+  if (!cevap.ok) throw new Error(veri.detail || ("HTTP " + cevap.status));
+  return veri;
+}
+
+async function ayarlariYukle() {
+  try {
+    const a = await cagir("/api/ayarlar");
+    $("#altbaslik").textContent =
+      `${a.magaza} · KDV %${a.kdv_orani} · kargo ${a.kargoyu_dagit ? "ürüne dağıtılıyor" : "ayrı satır"}`;
+    if (a.test_modu)
+      mesaj("TEST MODU açık — faturalar GİB test ortamına gider, resmî değildir. Gerçek fatura için .env dosyasında GIB_TEST_MODU=false yapın.", "uyari");
+    if (a.eksik_ayarlar.length)
+      mesaj("Eksik ayar: " + a.eksik_ayarlar.join(", ") + " (.env dosyasını doldurun)", "hata");
+  } catch (h) { mesaj(h.message, "hata"); }
+}
+
+function alanKutusu(id, alan, etiket, deger) {
+  return `<div><label>${etiket}</label>
+    <input data-id="${id}" data-alan="${alan}" value="${(deger || "").replace(/"/g, "&quot;")}"></div>`;
+}
+
+function ciz() {
+  const govde = $("#govde");
+  govde.innerHTML = "";
+  if (!faturalar.length) {
+    $("#tablo-kart").style.display = "none";
+    $("#islem-kart").style.display = "none";
+    return;
+  }
+  $("#tablo-kart").style.display = "";
+  $("#islem-kart").style.display = "";
+
+  for (const f of faturalar) {
+    const tr = document.createElement("tr");
+    if (secili.has(f.siparis_id)) tr.className = "secili";
+
+    const kalemler = f.kalemler
+      .map((k) => `${k.miktar}× ${k.ad} <span class="sag">${k.dahil} ₺</span>`)
+      .join("<br>");
+    const rozetler = f.uyarilar
+      .map((u) => `<span class="rozet r-uyari">${u}</span>`).join("");
+    const sapma = parseFloat(f.sapma);
+    const sapmaRozet = sapma !== 0
+      ? `<span class="rozet r-hata">sapma ${f.sapma} ₺</span>` : "";
+
+    tr.innerHTML = `
+      <td><input type="checkbox" data-sec="${f.siparis_id}"
+           ${secili.has(f.siparis_id) ? "checked" : ""}></td>
+      <td><strong>${f.siparis_no}</strong><br><span class="kalem">${f.tarih}</span></td>
+      <td>
+        ${f.alici.unvan || (f.alici.ad + " " + f.alici.soyad)}<br>
+        <span class="kalem">${[f.alici.ilce, f.alici.sehir].filter(Boolean).join(" / ")}</span><br>
+        <span class="baglanti" data-ac="${f.siparis_id}">bilgileri düzenle ▾</span>
+        <div class="duzenle" id="d-${f.siparis_id}">
+          ${alanKutusu(f.siparis_id, "ad", "Ad", f.alici.ad)}
+          ${alanKutusu(f.siparis_id, "soyad", "Soyad", f.alici.soyad)}
+          ${alanKutusu(f.siparis_id, "unvan", "Ünvan (kurumsal)", f.alici.unvan)}
+          ${alanKutusu(f.siparis_id, "vkn_tckn", "VKN / TCKN", f.alici.vkn_tckn)}
+          ${alanKutusu(f.siparis_id, "vergi_dairesi", "Vergi dairesi", f.alici.vergi_dairesi)}
+          ${alanKutusu(f.siparis_id, "adres", "Adres", f.alici.adres)}
+          ${alanKutusu(f.siparis_id, "ilce", "İlçe", f.alici.ilce)}
+          ${alanKutusu(f.siparis_id, "sehir", "Şehir", f.alici.sehir)}
+          ${alanKutusu(f.siparis_id, "telefon", "Telefon", f.alici.telefon)}
+          ${alanKutusu(f.siparis_id, "eposta", "E-posta", f.alici.eposta)}
+        </div>
+      </td>
+      <td class="kalem">${kalemler}${rozetler ? "<br>" + rozetler : ""}${sapmaRozet}</td>
+      <td class="sag">${f.matrah}</td>
+      <td class="sag">${f.kdv}</td>
+      <td class="sag"><strong>${f.toplam} ₺</strong></td>`;
+    govde.appendChild(tr);
+  }
+  secimOzeti();
+}
+
+function secimOzeti() {
+  const secilenler = faturalar.filter((f) => secili.has(f.siparis_id));
+  const toplam = secilenler.reduce((t, f) => t + parseFloat(f.toplam), 0);
+  $("#secim-ozet").textContent = secilenler.length
+    ? `${secilenler.length} fatura seçili · ${toplam.toFixed(2)} ₺`
+    : "Hiç fatura seçilmedi";
+  $("#taslak").disabled = secilenler.length === 0;
+}
+
+document.addEventListener("click", (olay) => {
+  const ac = olay.target.dataset.ac;
+  if (ac) {
+    // Sipariş id'si "gid://shopify/Order/123" biçiminde; geçerli bir CSS
+    // seçicisi olmadığı için querySelector değil getElementById kullanılır.
+    const kutu = document.getElementById("d-" + ac);
+    if (kutu) kutu.classList.toggle("acik");
+    return;
+  }
+
+  const sec = olay.target.dataset.sec;
+  if (sec) {
+    olay.target.checked ? secili.add(sec) : secili.delete(sec);
+    olay.target.closest("tr").className = olay.target.checked ? "secili" : "";
+    secimOzeti();
+  }
+});
+
+document.addEventListener("input", (olay) => {
+  const { id, alan } = olay.target.dataset;
+  if (!id || !alan) return;
+  (duzeltmeler[id] ||= {})[alan] = olay.target.value;
+});
+
+$("#hepsi").addEventListener("change", (olay) => {
+  secili.clear();
+  if (olay.target.checked) faturalar.forEach((f) => secili.add(f.siparis_id));
+  ciz();
+});
+
+$("#getir").addEventListener("click", async () => {
+  const dugme = $("#getir");
+  dugme.disabled = true; dugme.textContent = "Getiriliyor…";
+  try {
+    const veri = await cagir("/api/siparisler?tetikleyici=" + $("#tetikleyici").value);
+    faturalar = veri.faturalar;
+    secili.clear();
+    faturalar.forEach((f) => secili.add(f.siparis_id));
+    $("#hepsi").checked = true;
+    $("#ozet").textContent = veri.adet
+      ? `${veri.adet} faturalanmamış sipariş bulundu`
+      : "Faturalanmamış sipariş yok";
+    if (!veri.adet) mesaj("Faturalanacak sipariş bulunamadı.", "iyi");
+    ciz();
+  } catch (h) { mesaj(h.message, "hata"); }
+  dugme.disabled = false; dugme.textContent = "Siparişleri Getir";
+});
+
+$("#taslak").addEventListener("click", async () => {
+  const dugme = $("#taslak");
+  const idler = faturalar.filter((f) => secili.has(f.siparis_id)).map((f) => f.siparis_id);
+  if (!idler.length) return;
+  if (!confirm(`${idler.length} fatura taslağı GİB portalında oluşturulacak. Devam?`)) return;
+
+  dugme.disabled = true; dugme.textContent = "Oluşturuluyor…";
+  try {
+    const veri = await cagir("/api/taslaklar", {
+      method: "POST",
+      body: JSON.stringify({ siparis_idler: idler, duzeltmeler }),
+    });
+    mesaj(`${veri.basarili}/${veri.toplam} taslak oluşturuldu.`,
+          veri.basarili === veri.toplam ? "iyi" : "uyari");
+    veri.sonuclar.filter((s) => s.durum === "hata")
+      .forEach((s) => mesaj(`${s.siparis_no || s.siparis_id}: ${s.hata}`, "hata"));
+    if (veri.basarili) {
+      faturalar = faturalar.filter((f) => {
+        const s = veri.sonuclar.find((x) => x.siparis_id === f.siparis_id);
+        return !s || s.durum !== "taslak";
+      });
+      secili.clear(); ciz();
+    }
+  } catch (h) { mesaj(h.message, "hata"); }
+  dugme.disabled = false; dugme.textContent = "Seçilenlerin Taslağını Oluştur";
+});
+
+$("#sms").addEventListener("click", async () => {
+  const dugme = $("#sms");
+  dugme.disabled = true; dugme.textContent = "Gönderiliyor…";
+  try {
+    const veri = await cagir("/api/sms-iste", { method: "POST" });
+    mesaj(`${veri.telefon} numarasına SMS gönderildi. İmzalanacak taslak: ${veri.bekleyen}`, "iyi");
+    $("#kod").disabled = false; $("#onayla").disabled = false; $("#kod").focus();
+  } catch (h) { mesaj(h.message, "hata"); }
+  dugme.disabled = false; dugme.textContent = "SMS Kodu İste";
+});
+
+$("#onayla").addEventListener("click", async () => {
+  const kod = $("#kod").value.trim();
+  if (!kod) return mesaj("SMS kodunu girin.", "uyari");
+  const dugme = $("#onayla");
+  dugme.disabled = true; dugme.textContent = "İmzalanıyor…";
+  try {
+    const veri = await cagir("/api/imzala", {
+      method: "POST", body: JSON.stringify({ kod }),
+    });
+    mesaj(`${veri.imzalanan} fatura imzalandı, ${veri.etiketlenen} sipariş Shopify'da etiketlendi.`, "iyi");
+    veri.etiket_hatalari.forEach((h) => mesaj("Etiketleme: " + h, "uyari"));
+    $("#kod").value = ""; $("#kod").disabled = true;
+  } catch (h) { mesaj(h.message, "hata"); }
+  dugme.disabled = false; dugme.textContent = "Tümünü Onayla";
+});
+
+ayarlariYukle();
+</script>
+</body>
+</html>
