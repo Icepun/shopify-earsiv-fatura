@@ -226,14 +226,42 @@ Public depo `Icepun/shopify-earsiv-fatura`, GitHub Releases API. Yeni sürüm
 için: `config.SURUM`'u yükselt → `derle.py` → `vX.Y.Z` etiketiyle release,
 .exe'yi ekle.
 
-Windows çalışan .exe'nin **üzerine yazdırmaz** ama **adını değiştirtir**.
-Bu yüzden yardımcı betik yok:
-`Uygulama.exe -> Uygulama.eski.exe`, `Uygulama.yeni.exe -> Uygulama.exe`,
-sonra yeniden başlat. Artık dosya sonraki açılışta `eski_surumu_temizle()`
-ile siliniyor.
+Windows çalışan .exe'nin **üzerine yazdırmaz** ama **adını değiştirtir**:
+`Uygulama.exe -> Uygulama.eski.exe`, `Uygulama.yeni.exe -> Uygulama.exe`.
+Artık dosya sonraki açılışta `eski_surumu_temizle()` ile siliniyor.
 
 İndirme arka planda; ilerleme `/api/guncelleme/durum` ile yüzde olarak
-okunuyor (belirli ilerleme çubuğu).
+okunuyor (belirli ilerleme çubuğu). `httpx.stream`'e **timeout=None verme** —
+ağ takılınca indirme %0'da sonsuza kadar asılı kalıyor ve kullanıcı hiçbir
+şey görmüyordu; şimdi connect/read sınırı + 3 deneme var.
+
+### Uygulama kendini yeniden başlatmıyor — bilerek
+
+Dosya değiştirildikten sonra kullanıcıya "kapatıp yeniden açın" deniyor.
+Otomatik yeniden başlatmanın **dört yolu denendi, dördü de tutmadı**
+(Windows 11, PyInstaller onefile, penceresiz):
+
+| Yöntem | Sonuç |
+|---|---|
+| `os.startfile(exe)` | Yeni örnek açılıyor ama PyInstaller "Error" kutusuyla ölüyor — eski sürüm hâlâ ayakta |
+| `subprocess.Popen(..., DETACHED_PROCESS)` | Yardımcı süreç biz kapanınca birlikte ölüyor |
+| `cmd /c start "" exe` | Aynı şekilde ölüyor |
+| Bekleyip açan `.cmd` + `os.startfile(show_cmd=0)` | `.cmd` sonuna kadar çalışıyor (kendini siliyor) ama başlattığı uygulama ayağa kalkmıyor |
+
+İzole testte `os.startfile` ile açılan çocuk süreç ebeveyn `os._exit(0)`
+yaptıktan sonra **yaşıyor** — yani mekanizma değil, uygulamanın kendi
+başlangıcı takılıyor. Tekrar denemeye kalkarsan `guncelleme.log`'a bak,
+körlemesine uğraşma.
+
+Tek çift tıklamaya değmez; kullanıcıya söylemek sıfır riskli ve her seferinde
+çalışıyor (1.0.14 -> 1.0.15 ile uçtan uca doğrulandı).
+
+### `private_mode` kapatma
+
+`webview.start()` çağrısında `private_mode=False` **verme**. Kapalıyken
+WebView2 sabit bir profil klasörü kullanıyor ve aynı anda iki örnek
+açılamıyor. Varsayılan (True) her örneğe kendi geçici klasörünü veriyor.
+Kalıcı veri zaten sunucu tarafında.
 
 .exe **imzalı değil** — Windows SmartScreen ilk açılışta "bilinmeyen
 yayımcı" diyecek. Kod imzalama sertifikası alınmadıkça bu sürecek.

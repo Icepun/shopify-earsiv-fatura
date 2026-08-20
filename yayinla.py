@@ -16,9 +16,10 @@ import mimetypes
 import os
 import subprocess
 import sys
-import urllib.error
-import urllib.request
+import time
 from pathlib import Path
+
+import httpx
 
 KOK = Path(__file__).resolve().parent
 sys.path.insert(0, str(KOK))
@@ -37,20 +38,49 @@ def _token() -> str:
     return tok
 
 
-def _istek(yol: str, veri=None, yontem=None, ham=None, tur=None, taban=API):
-    istek = urllib.request.Request(taban + yol, method=yontem)
-    istek.add_header("Authorization", "Bearer " + _token())
-    istek.add_header("Accept", "application/vnd.github+json")
-    istek.add_header("User-Agent", "magicland-fatura")
+class YayinHatasi(RuntimeError):
+    def __init__(self, kod: int, govde: str):
+        self.kod = kod
+        super().__init__(f"HTTP {kod}: {govde[:300]}")
+
+
+def _istek(yol: str, veri=None, yontem=None, ham=None, tur=None, taban=API,
+           deneme: int = 4):
+    """GitHub API çağrısı. Ağ koparsa yeniden dener.
+
+    19 MB'lık .exe yüklerken bağlantı zaman zaman düşüyor; tek denemede
+    bırakmak release'i yarım bırakıyordu.
+    """
+    basliklar = {
+        "Authorization": "Bearer " + _token(),
+        "Accept": "application/vnd.github+json",
+        "User-Agent": "magicland-fatura",
+    }
+    govde_tipi = {}
     if ham is not None:
-        istek.data = ham
-        istek.add_header("Content-Type", tur or "application/octet-stream")
+        basliklar["Content-Type"] = tur or "application/octet-stream"
+        govde_tipi = {"content": ham}
     elif veri is not None:
-        istek.data = json.dumps(veri).encode()
-        istek.add_header("Content-Type", "application/json")
-    with urllib.request.urlopen(istek) as cevap:
-        govde = cevap.read()
-        return json.loads(govde) if govde else {}
+        govde_tipi = {"json": veri}
+
+    son_hata = None
+    for sira in range(deneme):
+        try:
+            with httpx.Client(timeout=httpx.Timeout(300.0, connect=30.0)) as istemci:
+                cevap = istemci.request(
+                    yontem or "GET", taban + yol, headers=basliklar, **govde_tipi
+                )
+            if cevap.status_code >= 400:
+                # 4xx tekrar denemeye değmez (404 hariç, çağıran ele alıyor).
+                raise YayinHatasi(cevap.status_code, cevap.text)
+            return cevap.json() if cevap.content else {}
+        except httpx.HTTPError as hata:
+            son_hata = hata
+            if sira < deneme - 1:
+                bekle = 2 ** sira
+                print(f"    baglanti koptu, {bekle} sn sonra tekrar ({sira + 2}/{deneme})")
+                time.sleep(bekle)
+    raise RuntimeError(f"GitHub'a ulasilamadi: {son_hata}")
 
 
 def _etiketi_hazirla(etiket: str) -> None:
@@ -79,9 +109,9 @@ def main() -> int:
     try:
         yayin = _istek(f"/repos/{depo}/releases/tags/{etiket}")
         print("  mevcut release bulundu, varlik guncellenecek")
-    except urllib.error.HTTPError as hata:
-        if hata.code != 404:
-            print("  release okunamadi:", hata.code, hata.read().decode()[:200])
+    except YayinHatasi as hata:
+        if hata.kod != 404:
+            print("  release okunamadi:", hata)
             return 1
         yayin = _istek(
             f"/repos/{depo}/releases",

@@ -18,8 +18,8 @@ from __future__ import annotations
 
 import os
 import re
-import subprocess
 import sys
+import time
 import threading
 from pathlib import Path
 
@@ -120,27 +120,48 @@ def yeni_dosya_yolu() -> Path:
     return Path(sys.executable).with_suffix(".yeni.exe")
 
 
+# Toplam süre sınırsız (dosya büyük) ama bağlantı ve parçalar arası bekleme
+# sınırlı: timeout=None verildiğinde ağ takılınca indirme %0'da sonsuza
+# kadar asılı kalıyordu ve kullanıcıya hiçbir şey söylenmiyordu.
+_ZAMAN_ASIMI = httpx.Timeout(None, connect=30.0, read=60.0, write=30.0, pool=30.0)
+_DENEME = 3
+
+
+def _bir_kez_indir(url: str, hedef: Path) -> None:
+    with httpx.stream("GET", url, timeout=_ZAMAN_ASIMI, follow_redirects=True) as cevap:
+        cevap.raise_for_status()
+        boyut = int(cevap.headers.get("Content-Length") or 0)
+        _durumu_yaz(asama="indiriliyor", yuzde=0, inen=0, boyut=boyut, hata="")
+        inen = 0
+        with open(hedef, "wb") as dosya:
+            for parca in cevap.iter_bytes(chunk_size=262144):
+                dosya.write(parca)
+                inen += len(parca)
+                yuzde = int(inen * 100 / boyut) if boyut else 0
+                _durumu_yaz(inen=inen, yuzde=min(yuzde, 100))
+    if boyut and inen < boyut:
+        raise OSError(f"Dosya eksik indi ({inen}/{boyut}).")
+
+
 def _indir(url: str) -> None:
     hedef = yeni_dosya_yolu()
-    try:
-        with httpx.stream("GET", url, timeout=None, follow_redirects=True) as cevap:
-            cevap.raise_for_status()
-            boyut = int(cevap.headers.get("Content-Length") or 0)
-            _durumu_yaz(asama="indiriliyor", yuzde=0, inen=0, boyut=boyut, hata="")
-            inen = 0
-            with open(hedef, "wb") as dosya:
-                for parca in cevap.iter_bytes(chunk_size=262144):
-                    dosya.write(parca)
-                    inen += len(parca)
-                    yuzde = int(inen * 100 / boyut) if boyut else 0
-                    _durumu_yaz(inen=inen, yuzde=min(yuzde, 100))
-        _durumu_yaz(asama="hazir", yuzde=100, dosya=str(hedef))
-    except Exception as hata:  # ağ, disk, izin — hepsi kullanıcıya aynı görünür
+    son_hata = None
+    for sira in range(_DENEME):
         try:
-            hedef.unlink(missing_ok=True)
-        except OSError:
-            pass
-        _durumu_yaz(asama="hata", hata=str(hata))
+            _bir_kez_indir(url, hedef)
+            _durumu_yaz(asama="hazir", yuzde=100, dosya=str(hedef))
+            return
+        except Exception as hata:  # ağ, disk, izin
+            son_hata = hata
+            _gunluge_yaz(f"indirme denemesi {sira + 1} basarisiz: {hata}")
+            try:
+                hedef.unlink(missing_ok=True)
+            except OSError:
+                pass
+            if sira < _DENEME - 1:
+                _durumu_yaz(asama="indiriliyor", yuzde=0, inen=0, boyut=0)
+                time.sleep(2 * (sira + 1))
+    _durumu_yaz(asama="hata", hata=f"İndirilemedi: {son_hata}")
 
 
 def indirmeyi_baslat(url: str) -> dict:
@@ -155,6 +176,29 @@ def indirmeyi_baslat(url: str) -> dict:
 
 
 # ─── kurulum ─────────────────────────────────────────────────────────
+
+
+def _gunluge_yaz(metin: str) -> None:
+    """Güncelleme adımlarını dosyaya yazar.
+
+    Uygulama penceresiz çalıştığı için buradaki hatalar hiçbir yere
+    düşmüyordu; sorun çıkarsa bakılacak tek yer bu dosya.
+    """
+    try:
+        yol = config.veri_klasoru() / "guncelleme.log"
+        with yol.open("a", encoding="utf-8") as dosya:
+            dosya.write(metin + "\n")
+    except OSError:
+        pass
+
+
+def acilisi_gunlukle() -> None:
+    """Her açılışı günlüğe yazar.
+
+    Güncelleme sonrası yeni sürümün gerçekten ayağa kalkıp kalkmadığını
+    başka türlü görmenin yolu yok; pencere açılmazsa hiçbir iz kalmıyordu.
+    """
+    _gunluge_yaz(f"acilis: surum {config.SURUM} pid {os.getpid()}")
 
 
 def eski_surumu_temizle() -> None:
@@ -180,6 +224,7 @@ def kuruluma_gec() -> dict:
     if not yeni.exists():
         return {"tamam": False, "hata": "İndirilen dosya bulunamadı."}
 
+    _gunluge_yaz(f"--- kurulum: {calisan.name}")
     try:
         eski.unlink(missing_ok=True)
         # Windows çalışan .exe'nin adını değiştirmeye izin verir.
@@ -190,16 +235,21 @@ def kuruluma_gec() -> dict:
             eski.rename(calisan)  # geri al
             raise
     except OSError as hata:
+        _gunluge_yaz(f"dosya degistirilemedi: {hata}")
         return {"tamam": False, "hata": f"Dosya değiştirilemedi: {hata}"}
+    _gunluge_yaz("dosya degistirildi")
 
-    try:
-        subprocess.Popen(
-            [str(calisan)],
-            close_fds=True,
-            creationflags=getattr(subprocess, "DETACHED_PROCESS", 0),
-        )
-    except OSError as hata:
-        return {"tamam": False, "hata": f"Yeni sürüm başlatılamadı: {hata}"}
-
-    threading.Timer(1.0, lambda: os._exit(0)).start()
-    return {"tamam": True}
+    # Uygulamayı kendimiz yeniden başlatmıyoruz.
+    #
+    # Denenenler ve sonuçları (hepsi Windows 11 + PyInstaller onefile):
+    #   - os.startfile: yeni örnek açılıyor ama eski sürüm hâlâ ayakta
+    #     olduğu için PyInstaller'ın "Error" kutusuyla ölüyor.
+    #   - subprocess.Popen (DETACHED_PROCESS / cmd start / gizli powershell):
+    #     yardımcı süreç biz kapanınca birlikte ölüyor.
+    #   - Bekleyip açan .cmd yardımcısı: .cmd sonuna kadar çalışıyor
+    #     (kendini siliyor) ama başlattığı uygulama ayağa kalkmıyor.
+    #
+    # Güvenilir olan yol: dosyayı değiştirip kullanıcıya söylemek. Uygulama
+    # bir sonraki açılışta yeni sürümle gelir. Bir çift tıklama, sıfır risk.
+    _gunluge_yaz("kurulum tamam, yeniden baslatma kullaniciya birakildi")
+    return {"tamam": True, "yeniden_baslat_gerekli": True}

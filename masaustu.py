@@ -82,6 +82,7 @@ def sunucuyu_bekle(port: int, saniye: float = 25.0) -> bool:
 
 
 def main() -> int:
+    guncelleme.acilisi_gunlukle()
     # Bir önceki güncellemeden kalan .eski.exe varsa şimdi silinebilir.
     guncelleme.eski_surumu_temizle()
 
@@ -106,7 +107,13 @@ def main() -> int:
                 "<p>Lütfen kapatıp yeniden açın.</p></body>"
             )
 
-    webview.start(hazir_olunca, private_mode=False)
+    # private_mode=True (varsayılan) şart: kapalıyken WebView2 sabit bir
+    # profil klasörü kullanıyor ve aynı anda iki örnek açılamıyor. Güncelleme
+    # sırasında eski sürüm birkaç saniye daha ayakta kaldığı için yeni sürüm
+    # o profili alamayıp sessizce ölüyordu. Kalıcı veri zaten sunucu
+    # tarafında (ayarlar.json + SQLite), tarayıcı profilinde tutulan bir şey
+    # yok.
+    webview.start(hazir_olunca)
     return 0
 
 

@@ -9,4 +9,3 @@ build/
 dist/
 *.spec
 .DS_Store
-test-kurulum/

@@ -583,9 +583,13 @@ $("#guncelleme-kur").addEventListener("click", async () => {
       if (d.asama === "hata") throw new Error(d.hata || "İndirme başarısız.");
       await new Promise((r) => setTimeout(r, 400));
     }
-    $("#guncelleme-aciklama").textContent = "Kuruluyor, uygulama yeniden başlayacak…";
+    $("#guncelleme-aciklama").textContent = "Kuruluyor…";
     dugme.textContent = "Kuruluyor…";
-    await cagir("/api/guncelleme/kur", { method: "POST" });
+    const k = await cagir("/api/guncelleme/kur", { method: "POST" });
+    if (!k.tamam) throw new Error(k.hata || "Kurulum tamamlanamadı.");
+
+    $("#guncelleme-serit").classList.remove("acik");
+    mesaj("Güncelleme kuruldu. Uygulamayı kapatıp yeniden açtığınızda yeni sürüm çalışacak.", "uyari");
   } catch (h) {
     mesaj("Güncelleme başarısız: " + h.message, "hata");
     dugme.disabled = false; $("#guncelleme-sonra").disabled = false;
