@@ -8,11 +8,14 @@ import sys
 
 # Windows konsolu varsayılan olarak cp1254 kullanır; Türkçe karakterler ve
 # işaretler UnicodeEncodeError'a yol açmasın diye çıktıyı UTF-8'e alıyoruz.
-if hasattr(sys.stdout, "reconfigure"):
-    try:
-        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-    except (ValueError, OSError):
-        pass
+# stderr de dahil: beklenmeyen bir hatada traceback'teki Türkçe mesaj
+# okunamaz hale geliyordu.
+for _akis in (sys.stdout, sys.stderr):
+    if hasattr(_akis, "reconfigure"):
+        try:
+            _akis.reconfigure(encoding="utf-8", errors="replace")
+        except (ValueError, OSError):
+            pass
 
 from fatura import config
 from fatura.donustur import siparisi_faturaya_cevir
@@ -51,6 +54,7 @@ def main() -> int:
         shopify = Shopify()
         siparisler = shopify.faturalanmamis_siparisler(limit=5)
         print(f"  {IYI} {shopify.magaza} bağlantısı çalışıyor")
+        print(f"  {BILGI} Kimlik yöntemi: {shopify.kimlik_yontemi}")
         print(f"  {BILGI} Faturalanmamış sipariş (ilk 5): {len(siparisler)}")
         for siparis in siparisler:
             print(f"      {siparis['name']}  {siparis['createdAt'][:10]}  "
@@ -100,7 +104,8 @@ def main() -> int:
     if hata_sayisi:
         print(f"  {KOTU} {hata_sayisi} sorun var, yukarıya bak.\n")
         return 1
-    print(f"  {IYI} Her şey hazır — ./baslat.sh ile paneli açabilirsin.\n")
+    baslatici = "baslat.bat" if sys.platform == "win32" else "./baslat.sh"
+    print(f"  {IYI} Her şey hazır — {baslatici} ile paneli açabilirsin.\n")
     return 0
 
 

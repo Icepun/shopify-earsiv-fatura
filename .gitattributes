@@ -1,0 +1,8 @@
+# Depo LF ile tutulur (macOS + Windows karisik calisiliyor).
+* text=auto eol=lf
+
+# .bat dosyalari CRLF olmak zorunda (cmd.exe bozuk yorumluyor).
+# -text = git hicbir donusum yapmasin, bayt bayt oldugu gibi kalsin.
+*.bat -text
+
+*.db binary

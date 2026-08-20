@@ -3,5 +3,9 @@
 __pycache__/
 *.pyc
 *.db
+ayarlar.json
 faturalar/
+build/
+dist/
+*.spec
 .DS_Store

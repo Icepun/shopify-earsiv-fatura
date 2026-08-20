@@ -1,54 +1,230 @@
-"""Ortam değişkenlerinden okunan ayarlar."""
+"""Ayarlar.
 
+Ayarlar iki kaynaktan gelebilir:
+
+1. `ayarlar.json` — uygulamanın kendi ayarlar ekranından yazılır. Asıl kaynak
+   budur; kullanıcı dosya kurcalamaz.
+2. `.env` — eski/geliştirici akışı. `ayarlar.json` yoksa bir kereliğine
+   buradan okunup devralınır, böylece mevcut kurulumlar bozulmaz.
+
+Modül düzeyindeki BÜYÜK_HARF adlar geri uyumluluk için duruyor;
+`yeniden_yukle()` onları yerinde tazeliyor, dolayısıyla ayarlar ekranından
+kaydetmek uygulamayı yeniden başlatmayı gerektirmiyor.
+"""
+
+from __future__ import annotations
+
+import io
+import json
 import os
+import sys
 from pathlib import Path
 
-from dotenv import load_dotenv
+from dotenv import dotenv_values
 
 KOK = Path(__file__).resolve().parent.parent
-load_dotenv(KOK / ".env")
 
+SURUM = "1.0.0"
+UYGULAMA_ADI = "Magicland Fatura"
+GITHUB_DEPO = "Icepun/shopify-earsiv-fatura"
 
-def _bool(anahtar: str, varsayilan: bool) -> bool:
-    ham = os.getenv(anahtar)
-    if ham is None or ham.strip() == "":
-        return varsayilan
-    return ham.strip().lower() in {"1", "true", "evet", "yes", "on"}
-
-
-SHOPIFY_STORE = os.getenv("SHOPIFY_STORE", "").strip()
-SHOPIFY_TOKEN = os.getenv("SHOPIFY_TOKEN", "").strip()
 SHOPIFY_API_SURUMU = "2025-07"
-
-GIB_KULLANICI_KODU = os.getenv("GIB_KULLANICI_KODU", "").strip()
-GIB_SIFRE = os.getenv("GIB_SIFRE", "").strip()
-GIB_TEST_MODU = _bool("GIB_TEST_MODU", True)
-
-KDV_ORANI = int(os.getenv("KDV_ORANI", "20"))
-KARGOYU_DAGIT = _bool("KARGOYU_DAGIT", True)
-FATURA_NOTU = os.getenv("FATURA_NOTU", "").strip()
-
-# Test ve gerçek kayıtlar ayrı dosyalarda tutulur; test denemeleri
-# gerçek siparişleri "faturalandı" saymasın diye.
-VERITABANI = KOK / ("fatura-test.db" if GIB_TEST_MODU else "fatura.db")
-FATURA_KLASORU = KOK / "faturalar"
-
-# Faturası kesilen siparişe Shopify'da eklenen etiket.
 ETIKET = "faturalandi"
-
-# Nihai tüketici (şahıs) faturalarında kullanılan TCKN yer tutucusu.
 NIHAI_TUKETICI_TCKN = "11111111111"
+
+# Ayar adı -> (.env karşılığı, varsayılan)
+ALANLAR: dict[str, tuple[str, object]] = {
+    "shopify_magaza":          ("SHOPIFY_STORE", ""),
+    "shopify_istemci_kimligi": ("SHOPIFY_ISTEMCI_KIMLIGI", ""),
+    "shopify_gizli_anahtar":   ("SHOPIFY_GIZLI_ANAHTAR", ""),
+    "shopify_token":           ("SHOPIFY_TOKEN", ""),
+    "gib_kullanici_kodu":      ("GIB_KULLANICI_KODU", ""),
+    "gib_sifre":               ("GIB_SIFRE", ""),
+    "gib_test_modu":           ("GIB_TEST_MODU", True),
+    "kdv_orani":               ("KDV_ORANI", 20),
+    "kargoyu_dagit":           ("KARGOYU_DAGIT", True),
+    "fatura_notu":             ("FATURA_NOTU", ""),
+    "baslangic_tarihi":        ("BASLANGIC_TARIHI", ""),
+}
+
+# Ayarlar ekranına değeri gönderilmeyen, yalnızca yazılabilen alanlar.
+GIZLI_ALANLAR = {"shopify_gizli_anahtar", "shopify_token", "gib_sifre"}
+
+_ayarlar: dict = {}
+
+
+def paketlenmis() -> bool:
+    """PyInstaller ile .exe haline getirildi mi?"""
+    return getattr(sys, "frozen", False)
+
+
+def veri_klasoru() -> Path:
+    """Ayarların ve veritabanının durduğu klasör.
+
+    .exe tek dosya olarak çalışırken program klasörü geçici bir dizine
+    açılıyor ve kapanışta siliniyor; ayarları oraya yazmak olmaz. Kaynaktan
+    çalışırken proje klasörü kalıyor ki geliştirme akışı bozulmasın.
+    """
+    if not paketlenmis():
+        return KOK
+    taban = os.getenv("APPDATA") or os.getenv("LOCALAPPDATA") or str(Path.home())
+    klasor = Path(taban) / UYGULAMA_ADI
+    klasor.mkdir(parents=True, exist_ok=True)
+    return klasor
+
+
+def kaynak_klasoru() -> Path:
+    """Paketle birlikte gelen dosyaların (static/) kökü.
+
+    PyInstaller tek dosya modunda paketi geçici bir klasöre açar ve yolunu
+    sys._MEIPASS'te bildirir; `__file__` oraya güvenilir biçimde işaret
+    etmiyor.
+    """
+    if paketlenmis():
+        return Path(getattr(sys, "_MEIPASS", str(KOK)))
+    return KOK
+
+
+def ayar_dosyasi() -> Path:
+    return veri_klasoru() / "ayarlar.json"
+
+
+def _metni_bool(ham, varsayilan: bool) -> bool:
+    if isinstance(ham, bool):
+        return ham
+    if ham is None or str(ham).strip() == "":
+        return varsayilan
+    return str(ham).strip().lower() in {"1", "true", "evet", "yes", "on"}
+
+
+def _env_oku() -> dict:
+    """.env dosyasını kodlamasından bağımsız okur.
+
+    Windows'ta Not Defteri dosyayı "ANSI" (cp1254) kaydedebiliyor; düz okuma
+    UnicodeDecodeError ile patlıyordu.
+    """
+    yol = KOK / ".env"
+    if not yol.exists():
+        return {}
+    ham = yol.read_bytes()
+    for kodlama in ("utf-8-sig", "cp1254", "latin-1"):
+        try:
+            metin = ham.decode(kodlama)
+            break
+        except UnicodeDecodeError:
+            continue
+    else:  # pragma: no cover - latin-1 her baytı çözer
+        metin = ham.decode("utf-8", errors="replace")
+    okunan = dotenv_values(stream=io.StringIO(metin))
+    return {ad: deger for ad, deger in okunan.items() if deger is not None}
+
+
+def _envden_devral() -> dict:
+    env = _env_oku()
+    devralinan = {}
+    for ad, (env_adi, varsayilan) in ALANLAR.items():
+        ham = env.get(env_adi, os.getenv(env_adi))
+        if isinstance(varsayilan, bool):
+            devralinan[ad] = _metni_bool(ham, varsayilan)
+        elif isinstance(varsayilan, int):
+            try:
+                devralinan[ad] = int(str(ham).strip()) if ham else varsayilan
+            except ValueError:
+                devralinan[ad] = varsayilan
+        else:
+            devralinan[ad] = (ham or "").strip()
+    return devralinan
+
+
+def yeniden_yukle() -> dict:
+    """Ayarları diskten okur ve modül değişkenlerini tazeler."""
+    global _ayarlar
+
+    yol = ayar_dosyasi()
+    if yol.exists():
+        try:
+            kayitli = json.loads(yol.read_text(encoding="utf-8"))
+        except (ValueError, OSError):
+            kayitli = {}
+        temel = {ad: varsayilan for ad, (_, varsayilan) in ALANLAR.items()}
+        temel.update({ad: d for ad, d in kayitli.items() if ad in ALANLAR})
+        _ayarlar = temel
+    else:
+        # İlk açılış: varsa .env'den devral, yoksa varsayılanlarla başla.
+        _ayarlar = _envden_devral()
+
+    _globalleri_tazele()
+    return dict(_ayarlar)
+
+
+def kaydet(yeni: dict) -> dict:
+    """Ayarları diske yazar. Boş bırakılan gizli alanlar korunur."""
+    guncel = dict(_ayarlar)
+    for ad, (_, varsayilan) in ALANLAR.items():
+        if ad not in yeni:
+            continue
+        deger = yeni[ad]
+        if ad in GIZLI_ALANLAR and (deger is None or str(deger).strip() == ""):
+            # Ekranda maskeli duran alanı kullanıcı boş bıraktıysa eskisini
+            # silmiyoruz; yalnızca yenisini yazdıysa değiştiriyoruz.
+            continue
+        if isinstance(varsayilan, bool):
+            guncel[ad] = _metni_bool(deger, varsayilan)
+        elif isinstance(varsayilan, int):
+            try:
+                guncel[ad] = int(str(deger).strip())
+            except (ValueError, AttributeError):
+                guncel[ad] = varsayilan
+        else:
+            guncel[ad] = str(deger).strip()
+
+    yol = ayar_dosyasi()
+    yol.parent.mkdir(parents=True, exist_ok=True)
+    yol.write_text(json.dumps(guncel, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    globals()["_ayarlar"] = guncel
+    _globalleri_tazele()
+    return dict(guncel)
+
+
+def ayarlar() -> dict:
+    return dict(_ayarlar)
+
+
+def _globalleri_tazele() -> None:
+    g = globals()
+    a = _ayarlar
+    g["SHOPIFY_STORE"] = a.get("shopify_magaza", "")
+    g["SHOPIFY_ISTEMCI_KIMLIGI"] = a.get("shopify_istemci_kimligi", "")
+    g["SHOPIFY_GIZLI_ANAHTAR"] = a.get("shopify_gizli_anahtar", "")
+    g["SHOPIFY_TOKEN"] = a.get("shopify_token", "")
+    g["GIB_KULLANICI_KODU"] = a.get("gib_kullanici_kodu", "")
+    g["GIB_SIFRE"] = a.get("gib_sifre", "")
+    g["GIB_TEST_MODU"] = bool(a.get("gib_test_modu", True))
+    g["KDV_ORANI"] = int(a.get("kdv_orani", 20))
+    g["KARGOYU_DAGIT"] = bool(a.get("kargoyu_dagit", True))
+    g["FATURA_NOTU"] = a.get("fatura_notu", "")
+    g["BASLANGIC_TARIHI"] = a.get("baslangic_tarihi", "")
+    # Test kayıtları ayrı dosyada; test denemeleri gerçek siparişleri
+    # "faturalandı" saymasın diye.
+    g["VERITABANI"] = veri_klasoru() / (
+        "fatura-test.db" if g["GIB_TEST_MODU"] else "fatura.db"
+    )
+    g["FATURA_KLASORU"] = veri_klasoru() / "faturalar"
 
 
 def eksik_ayarlar() -> list[str]:
-    """Araç çalışmadan önce doldurulması gereken ayarların listesi."""
+    """Araç çalışmadan önce doldurulması gereken ayarlar."""
     eksik = []
     if not SHOPIFY_STORE:
-        eksik.append("SHOPIFY_STORE")
-    if not SHOPIFY_TOKEN:
-        eksik.append("SHOPIFY_TOKEN")
+        eksik.append("Shopify mağaza adresi")
+    if not SHOPIFY_TOKEN and not (SHOPIFY_ISTEMCI_KIMLIGI and SHOPIFY_GIZLI_ANAHTAR):
+        eksik.append("Shopify istemci kimliği ve gizli anahtarı")
     if not GIB_KULLANICI_KODU:
-        eksik.append("GIB_KULLANICI_KODU")
+        eksik.append("GİB kullanıcı kodu")
     if not GIB_SIFRE:
-        eksik.append("GIB_SIFRE")
+        eksik.append("GİB şifresi")
     return eksik
+
+
+yeniden_yukle()

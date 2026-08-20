@@ -75,12 +75,129 @@
     color: #fff; display: grid; place-items: center; font-size: 12px; font-weight: 700;
     flex-shrink: 0;
   }
+
+  .tarih-alan { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--soluk); }
+  .tarih-alan input { width: 148px; }
+  .cip {
+    font-size: 12px; font-weight: 600; padding: 5px 11px; border-radius: 999px;
+    border: 1px solid var(--cizgi); background: transparent; color: var(--soluk);
+  }
+  .cip:hover:not(:disabled) { color: var(--vurgu); border-color: var(--vurgu); }
+  .cip.etkin { background: var(--vurgu); border-color: var(--vurgu); color: #fff; }
+  .ipucu { font-size: 12px; color: var(--soluk); margin-top: 10px; }
+  #bekleyen-kutu {
+    display: none; margin: 14px 0; padding: 12px 14px;
+    border: 1px solid var(--cizgi); border-radius: 10px;
+    background: color-mix(in srgb, var(--vurgu) 4%, transparent);
+  }
+  #bekleyen-kutu.acik { display: block; animation: belir .3s ease both; }
+  #bekleyen-kutu th { padding-top: 0; }
+  #bekleyen-kutu td { padding: 7px 10px; font-size: 13px; }
+  #bekleyen-kutu tr:last-child td { border-bottom: none; }
+
+  /* Belirsiz ilerleme cubugu: bekleme sirasinda pencere olu kalmasin. */
+  .surec { height: 3px; border-radius: 999px; background: var(--cizgi); overflow: hidden;
+           margin-top: 12px; display: none; }
+  .surec.acik { display: block; }
+  .surec > i { display: block; height: 100%; width: 38%; border-radius: 999px;
+               background: var(--vurgu); animation: kayar 1.1s ease-in-out infinite; }
+  @keyframes kayar {
+    0%   { transform: translateX(-100%); }
+    100% { transform: translateX(320%); }
+  }
+
+  @keyframes belir { from { opacity: 0; transform: translateY(7px); } to { opacity: 1; transform: none; } }
+  tbody tr { animation: belir .3s cubic-bezier(.2,.7,.3,1) both; }
+  .mesaj { animation: belir .25s ease both; }
+  .kart, tr.secili td, button, input, select, .cip { transition: background-color .18s, border-color .18s, color .18s, opacity .18s; }
+  button:active:not(:disabled) { transform: translateY(1px); }
+  .duzenle { transition: opacity .2s; }
+  #secim-ozet { font-variant-numeric: tabular-nums; }
+
+  /* ─── üst şerit ─── */
+  .ustserit { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 20px; }
+  .ustserit h1 { margin: 0 0 2px; }
+  .ustserit .altbaslik { margin: 0; }
+  .surum { font-size: 11px; color: var(--soluk); border: 1px solid var(--cizgi);
+           padding: 2px 7px; border-radius: 999px; }
+
+  /* ─── ayarlar penceresi ─── */
+  .ortu {
+    position: fixed; inset: 0; background: rgba(0,0,0,.45);
+    display: none; place-items: center; padding: 20px; z-index: 50;
+    backdrop-filter: blur(2px);
+  }
+  .ortu.acik { display: grid; animation: solgun .18s ease both; }
+  @keyframes solgun { from { opacity: 0; } to { opacity: 1; } }
+  .pencere {
+    background: var(--kart); border: 1px solid var(--cizgi); border-radius: 14px;
+    width: min(640px, 100%); max-height: 88vh; overflow-y: auto; padding: 22px;
+    animation: yukari .22s cubic-bezier(.2,.7,.3,1) both;
+  }
+  @keyframes yukari { from { opacity: 0; transform: translateY(14px) scale(.99); }
+                      to { opacity: 1; transform: none; } }
+  .pencere h2 { font-size: 17px; margin: 0 0 4px; }
+  .pencere .altbaslik { margin-bottom: 18px; }
+  .bolum { margin-bottom: 20px; }
+  .bolum > h3 {
+    font-size: 12px; text-transform: uppercase; letter-spacing: .05em;
+    color: var(--soluk); margin: 0 0 10px; font-weight: 600;
+  }
+  .alan { margin-bottom: 12px; }
+  .alan > label { display: block; font-size: 12px; color: var(--soluk); margin-bottom: 4px; }
+  .alan > input[type=text], .alan > input[type=password], .alan > input[type=number] { width: 100%; }
+  .alan .yardim { font-size: 11px; color: var(--soluk); margin-top: 4px; }
+  .kutucuk { display: flex; align-items: center; gap: 8px; font-size: 14px; }
+  .kutucuk input { width: auto; }
+  .kayitli { color: var(--iyi); font-weight: 600; }
+  .sinav { margin-top: 10px; font-size: 13px; }
+  .sinav > div { padding: 7px 10px; border-radius: 7px; margin-bottom: 6px; }
+  .pencere-alt {
+    display: flex; gap: 10px; align-items: center;
+    border-top: 1px solid var(--cizgi); padding-top: 16px; margin-top: 4px;
+  }
+
+  /* ─── güncelleme şeridi ─── */
+  .guncelleme {
+    display: none; border: 1px solid var(--vurgu); border-radius: 12px;
+    padding: 14px 16px; margin-bottom: 16px;
+    background: color-mix(in srgb, var(--vurgu) 8%, var(--kart));
+  }
+  .guncelleme.acik { display: block; animation: belir .3s ease both; }
+  .yuzde-cubuk { height: 6px; border-radius: 999px; background: var(--cizgi);
+                 overflow: hidden; margin-top: 10px; }
+  .yuzde-cubuk > i { display: block; height: 100%; width: 0; border-radius: 999px;
+                     background: var(--vurgu); transition: width .25s ease; }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: .01ms !important; animation-iteration-count: 1 !important;
+      transition-duration: .01ms !important;
+    }
+  }
 </style>
 </head>
 <body>
 <div class="sarmal">
-  <h1>Shopify → e-Arşiv Fatura</h1>
-  <div class="altbaslik" id="altbaslik">Yükleniyor…</div>
+  <div class="ustserit">
+    <div style="flex:1">
+      <h1>Shopify → e-Arşiv Fatura</h1>
+      <div class="altbaslik" id="altbaslik">Yükleniyor…</div>
+    </div>
+    <span class="surum" id="surum-rozet"></span>
+    <button id="ayarlar-ac">Ayarlar</button>
+  </div>
+
+  <div class="guncelleme" id="guncelleme-serit">
+    <div class="satir">
+      <strong id="guncelleme-baslik" style="font-size:14px"></strong>
+      <span style="flex:1"></span>
+      <button class="birincil" id="guncelleme-kur">Güncelle</button>
+      <button id="guncelleme-sonra">Sonra</button>
+    </div>
+    <div class="ipucu" id="guncelleme-aciklama"></div>
+    <div class="yuzde-cubuk" id="guncelleme-cubuk" style="display:none"><i></i></div>
+  </div>
 
   <div id="mesajlar"></div>
 
@@ -91,9 +208,19 @@
         <option value="fulfilled">Kargolanmış siparişler</option>
         <option value="paid">Ödemesi alınmış siparişler</option>
       </select>
+      <label class="tarih-alan">Başlangıç <input type="date" id="baslangic"></label>
+      <label class="tarih-alan">Bitiş <input type="date" id="bitis"></label>
       <button class="birincil" id="getir">Siparişleri Getir</button>
       <span id="ozet" class="kalem"></span>
     </div>
+    <div class="satir" style="margin-top:10px">
+      <button class="cip" data-aralik="bu-ay">Bu ay</button>
+      <button class="cip" data-aralik="gecen-ay">Geçen ay</button>
+      <button class="cip" data-aralik="son-30">Son 30 gün</button>
+      <button class="cip" data-aralik="tumu">Tümü</button>
+    </div>
+    <div class="ipucu">Tarihleri boş bırakırsan bütün faturalanmamış siparişler listelenir.</div>
+    <div class="surec" id="surec-getir"><i></i></div>
   </div>
 
   <div class="kart" id="tablo-kart" style="display:none">
@@ -124,6 +251,29 @@
       <button class="birincil" id="taslak">Seçilenlerin Taslağını Oluştur</button>
       <span class="kalem">GİB portalında taslak oluşur — SMS gerekmez, geri alınabilir.</span>
     </div>
+    <div class="surec" id="surec-taslak"><i></i></div>
+
+    <div id="bekleyen-kutu">
+      <div class="satir" style="margin-bottom:8px">
+        <strong style="font-size:14px">Bekleyen taslaklar</strong>
+        <span id="bekleyen-ozet" class="kalem"></span>
+        <span style="flex:1"></span>
+        <span class="baglanti" id="bekleyen-yenile">yenile</span>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>Sipariş</th>
+            <th class="sag">Tutar</th>
+            <th>Durum</th>
+            <th>Oluşturuldu</th>
+          </tr>
+        </thead>
+        <tbody id="bekleyen-govde"></tbody>
+      </table>
+      <div class="ipucu">GİB portalında "Onaylanmadı" olarak duruyorlar. Aşağıdaki adımda tek SMS koduyla hepsi imzalanır.</div>
+    </div>
+
     <div class="adim">
       <div class="adim-no">3</div>
       <button id="sms">SMS Kodu İste</button>
@@ -134,11 +284,108 @@
   </div>
 </div>
 
+<div class="ortu" id="ayarlar-ortu">
+  <div class="pencere">
+    <h2>Ayarlar</h2>
+    <div class="altbaslik">Bir kez doldurulur, sonra dokunmaya gerek kalmaz.</div>
+
+    <div class="bolum">
+      <h3>Shopify</h3>
+      <div class="alan">
+        <label>Mağaza adresi</label>
+        <input type="text" id="a-magaza" placeholder="magazaniz.myshopify.com">
+      </div>
+      <div class="alan">
+        <label>İstemci kimliği</label>
+        <input type="text" id="a-istemci" autocomplete="off">
+      </div>
+      <div class="alan">
+        <label>Gizli anahtar <span id="a-gizli-kayitli"></span></label>
+        <input type="password" id="a-gizli" autocomplete="new-password" placeholder="Değiştirmek için yeni değeri yazın">
+        <div class="yardim">Shopify uygulamanızın ayarlar sayfasındaki iki değer.</div>
+      </div>
+    </div>
+
+    <div class="bolum">
+      <h3>GİB e-Arşiv Portal</h3>
+      <div class="alan">
+        <label>Kullanıcı kodu</label>
+        <input type="text" id="a-gib-kod" autocomplete="off">
+      </div>
+      <div class="alan">
+        <label>Şifre <span id="a-gib-sifre-kayitli"></span></label>
+        <input type="password" id="a-gib-sifre" autocomplete="new-password" placeholder="Değiştirmek için yeni değeri yazın">
+      </div>
+      <div class="alan">
+        <label class="kutucuk">
+          <input type="checkbox" id="a-test">
+          Deneme modu — fatura kesilmez, sadece prova
+        </label>
+        <div class="yardim">Gerçek fatura kesmek için bu kutuyu boş bırakın.</div>
+      </div>
+    </div>
+
+    <div class="bolum">
+      <h3>Fatura</h3>
+      <div class="alan">
+        <label>KDV oranı (%)</label>
+        <input type="number" id="a-kdv" min="0" max="100" step="1" style="width:110px">
+      </div>
+      <div class="alan">
+        <label class="kutucuk">
+          <input type="checkbox" id="a-kargo">
+          Kargo bedelini ürün satırlarına dağıt
+        </label>
+      </div>
+      <div class="alan">
+        <label>Fatura notu</label>
+        <input type="text" id="a-not" placeholder="Boş bırakılabilir">
+      </div>
+    </div>
+
+    <div class="sinav" id="a-sinav"></div>
+
+    <div class="pencere-alt">
+      <button class="birincil" id="a-kaydet">Kaydet</button>
+      <button id="a-sina">Bağlantıyı Sına</button>
+      <span style="flex:1"></span>
+      <button id="a-kapat">Kapat</button>
+    </div>
+  </div>
+</div>
+
 <script>
 const $ = (s) => document.querySelector(s);
 let faturalar = [];
 const secili = new Set();
 const duzeltmeler = {};
+
+const azHareket = () =>
+  window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+function surec(id, acik) {
+  const el = $(id);
+  if (el) el.classList.toggle("acik", acik);
+}
+
+/** Sayıyı hedefe doğru yumuşakça akıtır (anlık zıplamasın diye). */
+function sayiAkit(el, bas, son, bicim, sure = 420) {
+  if (azHareket() || bas === son) { el.textContent = bicim(son); return; }
+  el.textContent = bicim(bas);
+  const t0 = performance.now();
+  // requestAnimationFrame sekme arka plandayken hiç çalışmayabiliyor; o
+  // durumda özet boş/eski kalmasın diye son değeri yazan emniyet zamanlayıcısı.
+  clearTimeout(el._akisEmniyet);
+  el._akisEmniyet = setTimeout(() => { el.textContent = bicim(son); }, sure + 120);
+  const adim = (t) => {
+    const o = Math.min(1, (t - t0) / sure);
+    const yumusak = 1 - Math.pow(1 - o, 3);
+    el.textContent = bicim(bas + (son - bas) * yumusak);
+    if (o < 1) requestAnimationFrame(adim);
+    else clearTimeout(el._akisEmniyet);
+  };
+  requestAnimationFrame(adim);
+}
 
 function mesaj(metin, tur = "iyi") {
   const kutu = document.createElement("div");
@@ -157,37 +404,223 @@ async function cagir(yol, secenekler = {}) {
   return veri;
 }
 
-async function ayarlariYukle() {
+async function bekleyenleriYukle() {
+  try {
+    const veri = await cagir("/api/bekleyenler");
+    bekleyenAdet = veri.adet;
+    const govde = $("#bekleyen-govde");
+    govde.innerHTML = "";
+
+    veri.taslaklar.forEach((t, sira) => {
+      const tr = document.createElement("tr");
+      tr.style.animationDelay = Math.min(sira * 20, 300) + "ms";
+      const durum = t.ettn
+        ? `<span class="rozet r-iyi">imza bekliyor</span>`
+        : `<span class="rozet r-uyari">ETTN eşleşmedi — portaldan onaylayın</span>`;
+      const zaman = (t.olusturma || "").replace("T", " ").slice(0, 16);
+      tr.innerHTML = `
+        <td><strong>${t.siparis_no || "—"}</strong></td>
+        <td class="sag">${t.tutar || "—"} ₺</td>
+        <td>${durum}</td>
+        <td class="kalem">${zaman}</td>`;
+      govde.appendChild(tr);
+    });
+
+    $("#bekleyen-kutu").classList.toggle("acik", veri.adet > 0);
+    $("#bekleyen-ozet").textContent = veri.adet
+      ? `${veri.adet} fatura imzalanmayı bekliyor`
+      : "";
+    kartGorunurlugu();
+  } catch (h) {
+    mesaj("Bekleyen taslaklar okunamadı: " + h.message, "uyari");
+  }
+}
+
+async function ayarlariYukle({ ilk = false } = {}) {
   try {
     const a = await cagir("/api/ayarlar");
-    $("#altbaslik").textContent =
-      `${a.magaza} · KDV %${a.kdv_orani} · kargo ${a.kargoyu_dagit ? "ürüne dağıtılıyor" : "ayrı satır"}`;
+    $("#surum-rozet").textContent = "s" + a.surum;
+    $("#altbaslik").textContent = a.magaza
+      ? `${a.magaza} · KDV %${a.kdv_orani} · kargo ${a.kargoyu_dagit ? "ürüne dağıtılıyor" : "ayrı satır"}`
+      : "Başlamak için Ayarlar'ı doldurun.";
+
+    const d = a.duzenlenebilir || {};
+    $("#a-magaza").value = d.shopify_magaza || "";
+    $("#a-istemci").value = d.shopify_istemci_kimligi || "";
+    $("#a-gib-kod").value = d.gib_kullanici_kodu || "";
+    $("#a-test").checked = !!a.test_modu;
+    $("#a-kdv").value = a.kdv_orani;
+    $("#a-kargo").checked = !!a.kargoyu_dagit;
+    $("#a-not").value = d.fatura_notu || "";
+    const dolu = a.dolu_gizliler || {};
+    $("#a-gizli-kayitli").innerHTML = dolu.shopify_gizli_anahtar
+      ? '<span class="kayitli">· kayıtlı</span>' : "";
+    $("#a-gib-sifre-kayitli").innerHTML = dolu.gib_sifre
+      ? '<span class="kayitli">· kayıtlı</span>' : "";
+
     if (a.test_modu)
-      mesaj("TEST MODU açık — faturalar GİB test ortamına gider, resmî değildir. Gerçek fatura için .env dosyasında GIB_TEST_MODU=false yapın.", "uyari");
-    if (a.eksik_ayarlar.length)
-      mesaj("Eksik ayar: " + a.eksik_ayarlar.join(", ") + " (.env dosyasını doldurun)", "hata");
+      mesaj("Deneme modu açık — resmî fatura kesilmez. Müşteri ad, adres ve telefonu gönderilmez, yerine örnek bilgiler yazılır.", "uyari");
+    if (a.baslangic_tarihi) $("#baslangic").value = a.baslangic_tarihi;
+
+    if (a.eksik_ayarlar.length) {
+      mesaj("Eksik ayar: " + a.eksik_ayarlar.join(", "), "hata");
+      if (ilk) ayarlariAc();   // ilk açılışta doğrudan ayarlara al
+    }
   } catch (h) { mesaj(h.message, "hata"); }
 }
+
+// ─── ayarlar penceresi ───────────────────────────────────────────
+
+function ayarlariAc() { $("#ayarlar-ortu").classList.add("acik"); }
+function ayarlariKapat() {
+  $("#ayarlar-ortu").classList.remove("acik");
+  $("#a-sinav").innerHTML = "";
+}
+
+function ayarFormu() {
+  return {
+    shopify_magaza: $("#a-magaza").value,
+    shopify_istemci_kimligi: $("#a-istemci").value,
+    shopify_gizli_anahtar: $("#a-gizli").value,
+    gib_kullanici_kodu: $("#a-gib-kod").value,
+    gib_sifre: $("#a-gib-sifre").value,
+    gib_test_modu: $("#a-test").checked,
+    kdv_orani: $("#a-kdv").value,
+    kargoyu_dagit: $("#a-kargo").checked,
+    fatura_notu: $("#a-not").value,
+  };
+}
+
+$("#ayarlar-ac").addEventListener("click", ayarlariAc);
+$("#a-kapat").addEventListener("click", ayarlariKapat);
+$("#ayarlar-ortu").addEventListener("click", (o) => {
+  if (o.target.id === "ayarlar-ortu") ayarlariKapat();
+});
+document.addEventListener("keydown", (o) => {
+  if (o.key === "Escape") ayarlariKapat();
+});
+
+async function ayarlariKaydet() {
+  const dugme = $("#a-kaydet");
+  dugme.disabled = true; dugme.textContent = "Kaydediliyor…";
+  try {
+    await cagir("/api/ayarlar", {
+      method: "POST",
+      body: JSON.stringify({ ayarlar: ayarFormu() }),
+    });
+    $("#a-gizli").value = ""; $("#a-gib-sifre").value = "";
+    $("#mesajlar").innerHTML = "";
+    await ayarlariYukle();
+    await bekleyenleriYukle();
+    mesaj("Ayarlar kaydedildi.", "iyi");
+  } catch (h) { mesaj(h.message, "hata"); }
+  dugme.disabled = false; dugme.textContent = "Kaydet";
+}
+$("#a-kaydet").addEventListener("click", ayarlariKaydet);
+
+$("#a-sina").addEventListener("click", async () => {
+  const dugme = $("#a-sina");
+  const kutu = $("#a-sinav");
+  dugme.disabled = true; dugme.textContent = "Sınanıyor…";
+  kutu.innerHTML = '<div class="mesaj">Bağlantılar deneniyor…</div>';
+  try {
+    // Sınamadan önce ekrandaki değerler kaydedilir, yoksa eskisi sınanır.
+    await cagir("/api/ayarlar", {
+      method: "POST",
+      body: JSON.stringify({ ayarlar: ayarFormu() }),
+    });
+    $("#a-gizli").value = ""; $("#a-gib-sifre").value = "";
+    const s = await cagir("/api/baglanti-testi", { method: "POST" });
+    const satir = (ad, r) =>
+      `<div class="mesaj m-${r.durum === "iyi" ? "iyi" : "hata"}">${ad}: ${r.mesaj}</div>`;
+    let html = satir("Shopify", s.shopify) + satir("GİB", s.gib);
+    if (s.gib.durum === "iyi" && !s.gib.telefon_var)
+      html += '<div class="mesaj m-uyari">GİB\'de kayıtlı telefon yok — SMS ile imzalama çalışmaz.</div>';
+    kutu.innerHTML = html;
+    await ayarlariYukle();
+  } catch (h) {
+    kutu.innerHTML = `<div class="mesaj m-hata">${h.message}</div>`;
+  }
+  dugme.disabled = false; dugme.textContent = "Bağlantıyı Sına";
+});
+
+// ─── güncelleme ──────────────────────────────────────────────────
+
+let guncellemeUrl = "";
+
+async function guncellemeKontrol() {
+  try {
+    const g = await cagir("/api/guncelleme");
+    if (!g.var || !g.kurulabilir) return;
+    guncellemeUrl = g.indirme_url;
+    $("#guncelleme-baslik").textContent = `Yeni sürüm hazır: ${g.surum}`;
+    $("#guncelleme-aciklama").textContent =
+      (g.notlar || "").split("\n")[0] || "Güncellemek için birkaç saniye sürer.";
+    $("#guncelleme-serit").classList.add("acik");
+  } catch { /* güncelleme sunucusuna ulaşılamazsa sessiz geç */ }
+}
+
+$("#guncelleme-sonra").addEventListener("click", () =>
+  $("#guncelleme-serit").classList.remove("acik"));
+
+$("#guncelleme-kur").addEventListener("click", async () => {
+  const dugme = $("#guncelleme-kur");
+  const cubuk = $("#guncelleme-cubuk");
+  dugme.disabled = true; $("#guncelleme-sonra").disabled = true;
+  dugme.textContent = "İndiriliyor…";
+  cubuk.style.display = "block";
+
+  try {
+    await cagir("/api/guncelleme/indir", {
+      method: "POST", body: JSON.stringify({ url: guncellemeUrl }),
+    });
+    while (true) {
+      const d = await cagir("/api/guncelleme/durum");
+      cubuk.firstElementChild.style.width = (d.yuzde || 0) + "%";
+      const mb = (d.boyut ? (d.inen / 1048576).toFixed(1) + " / " + (d.boyut / 1048576).toFixed(1) + " MB" : "");
+      $("#guncelleme-aciklama").textContent = `İndiriliyor… %${d.yuzde || 0} ${mb}`;
+      if (d.asama === "hazir") break;
+      if (d.asama === "hata") throw new Error(d.hata || "İndirme başarısız.");
+      await new Promise((r) => setTimeout(r, 400));
+    }
+    $("#guncelleme-aciklama").textContent = "Kuruluyor, uygulama yeniden başlayacak…";
+    dugme.textContent = "Kuruluyor…";
+    await cagir("/api/guncelleme/kur", { method: "POST" });
+  } catch (h) {
+    mesaj("Güncelleme başarısız: " + h.message, "hata");
+    dugme.disabled = false; $("#guncelleme-sonra").disabled = false;
+    dugme.textContent = "Güncelle"; cubuk.style.display = "none";
+  }
+});
 
 function alanKutusu(id, alan, etiket, deger) {
   return `<div><label>${etiket}</label>
     <input data-id="${id}" data-alan="${alan}" value="${(deger || "").replace(/"/g, "&quot;")}"></div>`;
 }
 
+let bekleyenAdet = 0;
+
+/** Taslak oluşturulunca liste boşalıyor; bekleyen taslak varsa 2. ve 3.
+ *  adım kartı yine de görünmeli, yoksa faturalar ekrandan kayboluyor. */
+function kartGorunurlugu() {
+  $("#tablo-kart").style.display = faturalar.length ? "" : "none";
+  $("#islem-kart").style.display = (faturalar.length || bekleyenAdet) ? "" : "none";
+}
+
 function ciz() {
   const govde = $("#govde");
   govde.innerHTML = "";
+  kartGorunurlugu();
   if (!faturalar.length) {
-    $("#tablo-kart").style.display = "none";
-    $("#islem-kart").style.display = "none";
+    secimOzeti();
     return;
   }
-  $("#tablo-kart").style.display = "";
-  $("#islem-kart").style.display = "";
 
-  for (const f of faturalar) {
+  faturalar.forEach((f, sira) => {
     const tr = document.createElement("tr");
     if (secili.has(f.siparis_id)) tr.className = "secili";
+    // Kademeli beliriş; uzun listede toplam gecikme kontrolden çıkmasın.
+    tr.style.animationDelay = Math.min(sira * 22, 500) + "ms";
 
     const kalemler = f.kalemler
       .map((k) => `${k.miktar}× ${k.ad} <span class="sag">${k.dahil} ₺</span>`)
@@ -224,16 +657,23 @@ function ciz() {
       <td class="sag">${f.kdv}</td>
       <td class="sag"><strong>${f.toplam} ₺</strong></td>`;
     govde.appendChild(tr);
-  }
+  });
   secimOzeti();
 }
 
+let sonToplam = 0;
 function secimOzeti() {
   const secilenler = faturalar.filter((f) => secili.has(f.siparis_id));
   const toplam = secilenler.reduce((t, f) => t + parseFloat(f.toplam), 0);
-  $("#secim-ozet").textContent = secilenler.length
-    ? `${secilenler.length} fatura seçili · ${toplam.toFixed(2)} ₺`
-    : "Hiç fatura seçilmedi";
+  const el = $("#secim-ozet");
+  if (!secilenler.length) {
+    el.textContent = "Hiç fatura seçilmedi";
+  } else {
+    const adet = secilenler.length;
+    sayiAkit(el, sonToplam, toplam,
+      (v) => `${adet} fatura seçili · ${v.toFixed(2)} ₺`);
+  }
+  sonToplam = toplam;
   $("#taslak").disabled = secilenler.length === 0;
 }
 
@@ -267,11 +707,48 @@ $("#hepsi").addEventListener("change", (olay) => {
   ciz();
 });
 
+// ─── tarih aralığı ───────────────────────────────────────────────
+
+// toISOString UTC'ye kaydırıp günü bir geri atabiliyor; yerel alanlardan kur.
+const gunMetni = (t) =>
+  `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, "0")}-${String(t.getDate()).padStart(2, "0")}`;
+
+function araligiUygula(ad) {
+  const bugun = new Date();
+  const y = bugun.getFullYear(), a = bugun.getMonth();
+  let bas = "", bit = "";
+  if (ad === "bu-ay") {
+    bas = gunMetni(new Date(y, a, 1)); bit = gunMetni(bugun);
+  } else if (ad === "gecen-ay") {
+    bas = gunMetni(new Date(y, a - 1, 1)); bit = gunMetni(new Date(y, a, 0));
+  } else if (ad === "son-30") {
+    const g = new Date(bugun); g.setDate(g.getDate() - 29);
+    bas = gunMetni(g); bit = gunMetni(bugun);
+  }
+  $("#baslangic").value = bas;
+  $("#bitis").value = bit;
+  document.querySelectorAll(".cip").forEach((c) =>
+    c.classList.toggle("etkin", c.dataset.aralik === ad));
+}
+
+document.querySelectorAll(".cip").forEach((cip) =>
+  cip.addEventListener("click", () => araligiUygula(cip.dataset.aralik)));
+
+// Tarih elle değiştirilirse hazır aralık vurgusu kalkmalı.
+["#baslangic", "#bitis"].forEach((se) =>
+  $(se).addEventListener("change", () =>
+    document.querySelectorAll(".cip").forEach((c) => c.classList.remove("etkin"))));
+
 $("#getir").addEventListener("click", async () => {
   const dugme = $("#getir");
   dugme.disabled = true; dugme.textContent = "Getiriliyor…";
+  surec("#surec-getir", true);
   try {
-    const veri = await cagir("/api/siparisler?tetikleyici=" + $("#tetikleyici").value);
+    const sorgu = new URLSearchParams({ tetikleyici: $("#tetikleyici").value });
+    if ($("#baslangic").value) sorgu.set("baslangic", $("#baslangic").value);
+    if ($("#bitis").value) sorgu.set("bitis", $("#bitis").value);
+
+    const veri = await cagir("/api/siparisler?" + sorgu.toString());
     faturalar = veri.faturalar;
     secili.clear();
     faturalar.forEach((f) => secili.add(f.siparis_id));
@@ -279,9 +756,13 @@ $("#getir").addEventListener("click", async () => {
     $("#ozet").textContent = veri.adet
       ? `${veri.adet} faturalanmamış sipariş bulundu`
       : "Faturalanmamış sipariş yok";
-    if (!veri.adet) mesaj("Faturalanacak sipariş bulunamadı.", "iyi");
+    if (!veri.adet) mesaj("Bu aralıkta faturalanacak sipariş bulunamadı.", "iyi");
+    if (veri.sinir_doldu)
+      mesaj(`Liste ${veri.sinir} siparişte kesildi. Tarih aralığını daraltıp parça parça ilerle.`, "uyari");
+    sonToplam = 0;
     ciz();
   } catch (h) { mesaj(h.message, "hata"); }
+  surec("#surec-getir", false);
   dugme.disabled = false; dugme.textContent = "Siparişleri Getir";
 });
 
@@ -291,13 +772,15 @@ $("#taslak").addEventListener("click", async () => {
   if (!idler.length) return;
   if (!confirm(`${idler.length} fatura taslağı GİB portalında oluşturulacak. Devam?`)) return;
 
-  dugme.disabled = true; dugme.textContent = "Oluşturuluyor…";
+  dugme.disabled = true;
+  dugme.textContent = `Oluşturuluyor… (${idler.length})`;
+  surec("#surec-taslak", true);
   try {
     const veri = await cagir("/api/taslaklar", {
       method: "POST",
       body: JSON.stringify({ siparis_idler: idler, duzeltmeler }),
     });
-    mesaj(`${veri.basarili}/${veri.toplam} taslak oluşturuldu.`,
+    mesaj(`${veri.basarili}/${veri.toplam} taslak oluşturuldu — aşağıda "Bekleyen taslaklar" listesinde, imzalanmayı bekliyor.`,
           veri.basarili === veri.toplam ? "iyi" : "uyari");
     veri.sonuclar.filter((s) => s.durum === "hata")
       .forEach((s) => mesaj(`${s.siparis_no || s.siparis_id}: ${s.hata}`, "hata"));
@@ -306,9 +789,11 @@ $("#taslak").addEventListener("click", async () => {
         const s = veri.sonuclar.find((x) => x.siparis_id === f.siparis_id);
         return !s || s.durum !== "taslak";
       });
-      secili.clear(); ciz();
+      secili.clear(); sonToplam = 0; ciz();
     }
+    await bekleyenleriYukle();
   } catch (h) { mesaj(h.message, "hata"); }
+  surec("#surec-taslak", false);
   dugme.disabled = false; dugme.textContent = "Seçilenlerin Taslağını Oluştur";
 });
 
@@ -335,11 +820,16 @@ $("#onayla").addEventListener("click", async () => {
     mesaj(`${veri.imzalanan} fatura imzalandı, ${veri.etiketlenen} sipariş Shopify'da etiketlendi.`, "iyi");
     veri.etiket_hatalari.forEach((h) => mesaj("Etiketleme: " + h, "uyari"));
     $("#kod").value = ""; $("#kod").disabled = true;
+    await bekleyenleriYukle();
   } catch (h) { mesaj(h.message, "hata"); }
   dugme.disabled = false; dugme.textContent = "Tümünü Onayla";
 });
 
-ayarlariYukle();
+$("#bekleyen-yenile").addEventListener("click", bekleyenleriYukle);
+
+ayarlariYukle({ ilk: true });
+bekleyenleriYukle();
+guncellemeKontrol();
 </script>
 </body>
 </html>

@@ -3,7 +3,7 @@ chcp 65001 >nul
 cd /d "%~dp0"
 title Baglanti Kontrolu
 
-if not exist .venv (
+if not exist ".venv\Scripts\python.exe" (
     echo [HATA] Once baslat.bat calistirilmali - kurulumu o yapiyor.
     pause
     exit /b 1

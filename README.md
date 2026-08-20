@@ -7,29 +7,52 @@ birden imzalar**.
 
 Portalda tek tek form doldurma yok. Aylık entegratör ücreti yok.
 
+**Masaüstü uygulamasıdır** — tek bir `.exe`, kurulum sihirbazı yok, Python
+kurmaya gerek yok. Ayarlar uygulamanın içinde; dosya düzenlenmez. Yeni sürüm
+çıktığında uygulama kendisi haber verir ve tek tıkla günceller.
+
 ---
 
-## Kurulum
+## Kullanacak kişi için
 
-### 1. Shopify Admin API anahtarı
+1. `MagiclandFatura.exe` dosyasını indir, çift tıkla. Kurulum yok.
+2. İlk açılışta **Ayarlar** penceresi kendiliğinden gelir; Shopify ve GİB
+   bilgileri doldurulur, **Bağlantıyı Sına** ile doğrulanır, kaydedilir.
+3. Bir daha ayarlara dokunmak gerekmez.
 
-Shopify yöneticisinde:
+> Windows ilk açılışta "bilinmeyen yayımcı" uyarısı gösterebilir
+> (**Daha fazla bilgi → Yine de çalıştır**). Dosya imzalı olmadığı için
+> normaldir.
 
-**Settings → Apps and sales channels → Develop apps → Create an app**
+Ayarlar ve kayıtlar `%APPDATA%\Magicland Fatura` klasöründe tutulur; uygulama
+güncellenince silinmez.
 
-*Configure Admin API scopes* bölümünde şu izinleri ver:
+---
 
-| İzin | Ne için |
-|---|---|
-| `read_orders` | Siparişleri okumak |
-| `write_orders` | Faturalanan siparişi etiketlemek |
-| `read_customers` | Müşteri e-posta / telefon bilgisi |
+## Geliştirme kurulumu
 
-Sonra **Install app** → **Reveal Admin API access token**.
-`shpat_` ile başlayan bu değeri kopyala.
+Aşağısı kaynaktan çalıştırmak ve yeni sürüm derlemek içindir.
 
-> 60 günden eski siparişleri listelemek istersen Shopify'ın ek onaya tabi
-> `read_all_orders` iznini de talep etmen gerekir. Günlük kullanımda gerekmez.
+### 1. Shopify Admin API kimlik bilgileri
+
+Shopify artık Admin içinden `shpat_...` tokeni veren "custom app" açtırmıyor.
+Yeni uygulamalar **Dev Dashboard**'da (dev.shopify.com) açılır ve kod, istemci
+kimliği + gizli anahtarı 24 saatlik bir erişim tokenine kendisi çevirir
+(*client credentials grant*). Panelin yaptığı bu; senin token kopyalaman
+gerekmiyor.
+
+1. **dev.shopify.com** > Apps > uygulamanı aç (yoksa oluştur).
+2. Uygulamanın sürümünde erişim izinlerini seç:
+   `read_orders`, `write_orders`, `read_customers`.
+3. Uygulamayı **mağazana kur** (Install). Kurulu değilse token alınamaz.
+4. **Ayarlar > Kimlik bilgileri**'ndeki iki değeri `.env`'e yaz:
+   `SHOPIFY_ISTEMCI_KIMLIGI` ve `SHOPIFY_GIZLI_ANAHTAR`.
+
+> Uygulama ile mağaza **aynı Shopify organizasyonunda** olmalı; değilse token
+> ucu `shop_not_permitted` döner. `kontrol.bat` bu durumu Türkçe açıklar.
+
+Elinde eskiden alınmış bir `shpat_...` tokeni varsa `SHOPIFY_TOKEN` alanına
+yazabilirsin; o zaman takas yapılmaz ve doğrudan kullanılır.
 
 ### 2. Ayarları gir
 
@@ -41,7 +64,8 @@ cp .env.example .env
 
 ```ini
 SHOPIFY_STORE=magicland-3d.myshopify.com
-SHOPIFY_TOKEN=shpat_...
+SHOPIFY_ISTEMCI_KIMLIGI=  # Dev Dashboard > Ayarlar > Kimlik bilgileri
+SHOPIFY_GIZLI_ANAHTAR=    # aynı ekrandaki gizli anahtar
 
 GIB_KULLANICI_KODU=      # İnternet Vergi Dairesi kullanıcı kodun
 GIB_SIFRE=               # İnternet Vergi Dairesi şifren
@@ -115,14 +139,23 @@ listeye düşmez.
 | `KDV_ORANI` | `20` | Uygulanacak KDV yüzdesi |
 | `KARGOYU_DAGIT` | `true` | `true`: kargo bedeli ürün satırlarına dağıtılır (ayrı satır görünmez). `false`: "Kargo Bedeli" ayrı satır olur |
 | `FATURA_NOTU` | boş | Her faturanın not alanına eklenir (IBAN vb.) |
+| `BASLANGIC_TARIHI` | boş | Panelde tarih aralığının varsayılan başlangıcı (YYYY-AA-GG). Boş = filtre yok |
 | `GIB_TEST_MODU` | `true` | `true` iken GİB **test** ortamına gider, resmî fatura kesilmez |
 
 ### Önce test et
 
-GİB'in test ortamında herkese açık hesaplar vardır (`33333301` / şifre `1`).
-`GIB_TEST_MODU=true` bırakıp bu bilgilerle akışı baştan sona deneyebilirsin:
-gerçek siparişlerin listelenir, taslaklar GİB'in **test** sunucusunda oluşur,
-resmî hiçbir belge doğmaz.
+GİB'in test ortamında herkese açık hesaplar vardır (`33333301` / şifre `1`;
+meşgulse `33333302` de çalışır). `GIB_TEST_MODU=true` bırakıp bu bilgilerle
+akışı baştan sona deneyebilirsin: gerçek siparişlerin listelenir, taslaklar
+GİB'in **test** sunucusunda oluşur, resmî hiçbir belge doğmaz.
+
+### Tarih aralığı
+
+1. adımdaki **Başlangıç** ve **Bitiş** alanlarıyla yalnızca belirli bir
+dönemin siparişleri listelenir; hazır seçenekler için *Bu ay / Geçen ay /
+Son 30 gün / Tümü* düğmeleri var. Boş bırakılırsa bütün faturalanmamış
+siparişler gelir. Birikmiş siparişleri ay ay, küçük partiler halinde
+faturalamak için kullanışlı.
 
 Test ortamında SMS imzalama çalışmaz (kayıtlı telefon yok), yani 3. adım
 denenemez. 1. ve 2. adım — sipariş çekme, hesaplama, taslak oluşturma —
@@ -186,28 +219,42 @@ makineni başkasıyla paylaşıyorsan dikkat et.
 ## Dosyalar
 
 ```
+masaustu.py        uygulama giriş noktası (pencere + gömülü sunucu)
+derle.py           tek dosyalık .exe üretir (dist/MagiclandFatura.exe)
+simge.ico          uygulama simgesi
 fatura/
-  config.py      .env ayarları
+  config.py      ayarlar (ayarlar.json; yoksa .env'den devralır)
   shopify_api.py Shopify Admin GraphQL istemcisi
   donustur.py    sipariş → fatura (KDV ayrıştırma, kargo dağıtımı, uyarılar)
   payload.py     fatura → GİB payload (+ tutarı yazıyla)
   gib.py         GİB e-Arşiv Portal istemcisi (login, taslak, toplu SMS imza)
   depo.py        SQLite: hangi sipariş faturalandı, ETTN'ler, hatalar
+  guncelleme.py  GitHub Releases'ten sürüm kontrolü, indirme, kurulum
   web.py         panel sunucusu (FastAPI)
-static/index.html  panel arayüzü
-kontrol.py         bağlantı ve hesap sınaması
-baslat.sh          kurulum + panel başlatma (macOS/Linux)
-baslat.bat         kurulum + panel başlatma (Windows)
-kontrol.bat        bağlantı sınaması (Windows)
+static/index.html  panel arayüzü + ayarlar penceresi
+kontrol.py         bağlantı sınaması (uygulama içindeki "Bağlantıyı Sına" ile aynı iş)
+baslat.sh / baslat.bat / kontrol.bat   geliştirme kısayolları
 CLAUDE.md          projede çalışacak Claude oturumları için notlar
 ```
+
+## Yeni sürüm çıkarma
+
+1. `fatura/config.py` içindeki `SURUM` değerini yükselt (ör. `1.1.0`).
+2. `.venv\Scripts\python.exe derle.py`
+3. GitHub'da `v1.1.0` etiketiyle release oluştur, `dist\MagiclandFatura.exe`
+   dosyasını ekle.
+
+Uygulama açılışta son release'i sorar, yenisi varsa şerit gösterir. Kullanıcı
+"Güncelle" derse .exe indirilir, çalışan dosyanın adı `.eski.exe` yapılıp
+yenisi yerine konur ve uygulama yeniden başlar.
 
 ## Sorun giderme
 
 | Belirti | Sebep |
 |---|---|
-| `Invalid API key or access token` | `.env` içindeki `SHOPIFY_TOKEN` yanlış veya app kurulmamış |
-| `GİB girişi başarısız` | Kullanıcı kodu/şifre hatalı, ya da `GIB_TEST_MODU` yanlış ortamı gösteriyor |
+| `Invalid API key or access token` | Ayarlar'daki istemci kimliği/gizli anahtar yanlış, ya da uygulama mağazaya kurulmamış |
+| `GİB girişi başarısız` | Kullanıcı kodu/şifre hatalı, ya da deneme modu yanlış ortamı gösteriyor |
+| `Sisteme aynı anda birden fazla giriş yapamazsınız` | Tarayıcıda e-Arşiv Portal açık; oradan "Güvenli Çıkış" yap |
 | `Portalda kayıtlı cep telefonu bulunamadı` | e-Arşiv Portal → Kullanıcı Bilgileri'nden telefon eklenmeli |
 | `Taslaklar GİB portalında bulunamadı` | Taslak farklı bir tarih aralığında; portaldan kontrol et |
 | Sipariş listeye düşmüyor | Zaten `faturalandi` etiketi var, ya da iptal edilmiş / ödemesi alınmamış |

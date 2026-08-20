@@ -11,14 +11,17 @@ from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import config, depo
+from . import config, depo, shopify_api
+from . import guncelleme as guncelleme_modulu
 from .donustur import Fatura, siparisi_faturaya_cevir
 from .gib import GibHatasi, GibPortal
+from .guncelleme import guncelleme_kontrol
 from .payload import gib_payloadu
 from .shopify_api import Shopify, ShopifyHatasi
 
 uygulama = FastAPI(title="Shopify → e-Arşiv Fatura")
-KOK = Path(__file__).resolve().parent.parent
+# Paketlenmiş .exe içinde static/ geçici klasöre açılır; yolu config verir.
+KOK = config.kaynak_klasoru()
 
 # Panel oturumu: GİB bağlantısı ve son çekilen siparişler bellekte tutulur.
 _durum: dict = {"gib": None, "siparisler": {}, "faturalar": {}, "oid": None, "telefon": None}
@@ -30,9 +33,10 @@ _durum: dict = {"gib": None, "siparisler": {}, "faturalar": {}, "oid": None, "te
 def _gib() -> GibPortal:
     portal = _durum.get("gib")
     if portal is None or not portal.token:
-        eksik = [a for a in ("GIB_KULLANICI_KODU", "GIB_SIFRE") if not getattr(config, a)]
-        if eksik:
-            raise HTTPException(400, f".env dosyasında {', '.join(eksik)} boş.")
+        if not config.GIB_KULLANICI_KODU or not config.GIB_SIFRE:
+            raise HTTPException(
+                400, "GİB kullanıcı kodu ve şifresi girilmemiş. Ayarlar'dan doldurun."
+            )
         portal = GibPortal(
             config.GIB_KULLANICI_KODU, config.GIB_SIFRE, config.GIB_TEST_MODU
         )
@@ -117,20 +121,108 @@ def panel() -> FileResponse:
 
 @uygulama.get("/api/ayarlar")
 def ayarlar() -> dict:
+    ham = config.ayarlar()
+    # Gizli alanların değeri arayüze hiç gönderilmiyor; yalnızca dolu olup
+    # olmadıkları bildiriliyor ki ekran "kayıtlı" yazabilsin.
+    duzenlenebilir = {
+        ad: ("" if ad in config.GIZLI_ALANLAR else deger)
+        for ad, deger in ham.items()
+    }
     return {
         "magaza": config.SHOPIFY_STORE,
         "test_modu": config.GIB_TEST_MODU,
         "kdv_orani": config.KDV_ORANI,
         "kargoyu_dagit": config.KARGOYU_DAGIT,
+        "baslangic_tarihi": config.BASLANGIC_TARIHI,
         "eksik_ayarlar": config.eksik_ayarlar(),
+        "surum": config.SURUM,
+        "duzenlenebilir": duzenlenebilir,
+        "dolu_gizliler": {ad: bool(ham.get(ad)) for ad in config.GIZLI_ALANLAR},
     }
 
 
-@uygulama.get("/api/siparisler")
-def siparisler(tetikleyici: str = "fulfilled", limit: int = 100) -> dict:
+class AyarIstegi(BaseModel):
+    ayarlar: dict
+
+
+@uygulama.post("/api/ayarlar")
+def ayarlari_kaydet(istek: AyarIstegi) -> dict:
+    config.kaydet(istek.ayarlar)
+
+    # Ayar değişince eldeki kimlikler geçersiz olabilir: Shopify tokenini ve
+    # açık GİB oturumunu bırakıyoruz. Test modu değiştiyse veritabanı da
+    # başka dosyaya kaydığı için şemayı orada da kuruyoruz.
+    shopify_api._token_deposu.temizle()
+    portal = _durum.get("gib")
+    if portal is not None:
+        try:
+            portal.kapat()
+        except Exception:
+            pass
+    _durum.update({"gib": None, "oid": None, "siparisler": {}, "faturalar": {}})
+    depo.hazirla()
+    return ayarlar()
+
+
+@uygulama.post("/api/baglanti-testi")
+def baglanti_testi() -> dict:
+    """Ayarlar ekranındaki "Bağlantıyı Sına" düğmesi.
+
+    kontrol.bat'ın yaptığını uygulama içinde yapar; kullanıcının konsola
+    düşmesi gerekmesin diye.
+    """
+    sonuc: dict = {}
+
     try:
         istemci = Shopify()
-        ham = istemci.faturalanmamis_siparisler(tetikleyici=tetikleyici, limit=limit)
+        siparisler = istemci.faturalanmamis_siparisler(limit=1)
+        sonuc["shopify"] = {
+            "durum": "iyi",
+            "mesaj": f"{istemci.magaza} bağlantısı çalışıyor "
+                     f"({istemci.kimlik_yontemi} ile).",
+            "siparis_var": bool(siparisler),
+        }
+    except ShopifyHatasi as hata:
+        sonuc["shopify"] = {"durum": "hata", "mesaj": str(hata)}
+
+    portal = GibPortal(
+        config.GIB_KULLANICI_KODU, config.GIB_SIFRE, config.GIB_TEST_MODU
+    )
+    try:
+        portal.giris()
+        bilgi = portal.kullanici_bilgileri()
+        unvan = (bilgi.get("unvan")
+                 or f"{bilgi.get('adi', '')} {bilgi.get('soyadi', '')}").strip()
+        sonuc["gib"] = {
+            "durum": "iyi",
+            "mesaj": f"Giriş başarılı — {unvan or 'mükellef adı yok'}"
+                     f" (VKN/TCKN {bilgi.get('vknTckn', '—')}).",
+            "telefon_var": bool(bilgi.get("telefon")),
+        }
+    except GibHatasi as hata:
+        sonuc["gib"] = {"durum": "hata", "mesaj": str(hata)}
+    finally:
+        try:
+            portal.kapat()
+        except Exception:
+            pass
+
+    return sonuc
+
+
+@uygulama.get("/api/siparisler")
+def siparisler(
+    tetikleyici: str = "fulfilled",
+    limit: int = 100,
+    baslangic: str = "",
+    bitis: str = "",
+) -> dict:
+    try:
+        istemci = Shopify()
+        ham = istemci.faturalanmamis_siparisler(
+            tetikleyici=tetikleyici, limit=limit,
+            baslangic=baslangic, bitis=bitis,
+        )
     except ShopifyHatasi as hata:
         raise HTTPException(400, str(hata))
 
@@ -147,7 +239,9 @@ def siparisler(tetikleyici: str = "fulfilled", limit: int = 100) -> dict:
         _durum["faturalar"][siparis["id"]] = fatura
         sonuc.append(_fatura_sozlugu(fatura))
 
-    return {"adet": len(sonuc), "faturalar": sonuc}
+    # Shopify tarafı limitte kesildiyse panel bunu sessizce yutmasın.
+    return {"adet": len(sonuc), "faturalar": sonuc,
+            "sinir_doldu": len(ham) >= limit, "sinir": limit}
 
 
 def _tarih_araligi() -> tuple[str, str]:
@@ -326,9 +420,53 @@ def imzala(istek: ImzaIstegi) -> dict:
     }
 
 
+@uygulama.get("/api/bekleyenler")
+def bekleyenler() -> dict:
+    """Taslağı oluşmuş ama henüz imzalanmamış faturalar.
+
+    Panel taslak oluşturduktan sonra satırları listeden düşürüyor; bu uç
+    olmadan kullanıcı faturaların nereye gittiğini göremiyordu.
+    """
+    satirlar = [dict(satir) for satir in depo.bekleyen_taslaklar()]
+    return {
+        "adet": len(satirlar),
+        "ettnsiz": sum(1 for satir in satirlar if not satir.get("ettn")),
+        "taslaklar": satirlar,
+    }
+
+
 @uygulama.get("/api/gecmis")
 def gecmis() -> dict:
     return {"kayitlar": depo.gecmis()}
+
+
+# ─── güncelleme ──────────────────────────────────────────────────────
+
+
+class IndirmeIstegi(BaseModel):
+    url: str
+
+
+@uygulama.get("/api/guncelleme")
+def guncelleme() -> dict:
+    return guncelleme_kontrol()
+
+
+@uygulama.post("/api/guncelleme/indir")
+def guncelleme_indir(istek: IndirmeIstegi) -> dict:
+    if not istek.url.startswith("https://github.com/"):
+        raise HTTPException(400, "Beklenmeyen indirme adresi.")
+    return guncelleme_modulu.indirmeyi_baslat(istek.url)
+
+
+@uygulama.get("/api/guncelleme/durum")
+def guncelleme_durum() -> dict:
+    return guncelleme_modulu.durum()
+
+
+@uygulama.post("/api/guncelleme/kur")
+def guncelleme_kur() -> dict:
+    return guncelleme_modulu.kuruluma_gec()
 
 
 uygulama.mount("/static", StaticFiles(directory=KOK / "static"), name="static")

@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from decimal import Decimal
 
 from . import config
-from .donustur import Fatura
+from .donustur import Alici, Fatura
 
 BIRLER = ["", "Bir", "İki", "Üç", "Dört", "Beş", "Altı", "Yedi", "Sekiz", "Dokuz"]
 ONLAR = ["", "On", "Yirmi", "Otuz", "Kırk", "Elli", "Altmış", "Yetmiş", "Seksen", "Doksan"]
@@ -49,9 +50,31 @@ def tutar_yaziyla(tutar: Decimal) -> str:
     return metin
 
 
+def _test_kimligi(alici: Alici) -> Alici:
+    """Test ortamı için alıcı kimliğini uydurma veriyle değiştirir.
+
+    GİB test portalı herkese açık ve paylaşımlıdır; oraya gerçek müşterinin
+    adını, adresini, telefonunu veya TCKN'sini göndermiyoruz. Tutarlar ile
+    il/ilçe/posta kodu aynen kalır — hesap ve adres türetme yine baştan sona
+    doğrulanabilsin diye.
+    """
+    kurumsal = bool(alici.unvan)
+    return replace(
+        alici,
+        ad="Deneme",
+        soyad="Musteri",
+        unvan="Deneme Ticaret A.S." if kurumsal else "",
+        vkn_tckn="1111111111" if kurumsal else config.NIHAI_TUKETICI_TCKN,
+        vergi_dairesi="Deneme" if kurumsal else "",
+        adres="Deneme Mah. 1 Sok. No:1",
+        telefon="5000000000",
+        eposta="deneme@example.com",
+    )
+
+
 def gib_payloadu(fatura: Fatura, fatura_notu: str | None = None) -> dict:
     """Onaylanmış Fatura nesnesinden GİB'e gönderilecek sözlüğü üretir."""
-    alici = fatura.alici
+    alici = _test_kimligi(fatura.alici) if config.GIB_TEST_MODU else fatura.alici
     notlar = [n for n in [(fatura_notu if fatura_notu is not None else config.FATURA_NOTU)] if n]
     notlar.append(tutar_yaziyla(fatura.toplam))
 

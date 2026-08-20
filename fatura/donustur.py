@@ -74,6 +74,22 @@ def telefon_duzelt(ham: str | None) -> str:
     return rakam if len(rakam) == 10 else ""
 
 
+def _tahsis_toplami(satir: dict) -> Decimal:
+    """Satıra düşen bütün indirim tahsislerinin toplamı.
+
+    `discountedTotalSet` yalnızca satır bazlı (allocationMethod EACH)
+    indirimi yansıtıyor. Sipariş geneline yayılan (ACROSS) indirim —
+    ör. "%25 kupon" — orada hiç görünmüyor; satır indirimsiz gibi
+    duruyor. Bu yüzden net tutarı `originalTotalSet` eksi buradaki
+    tahsisler olarak hesaplıyoruz; iki indirim türünü de kapsıyor.
+    """
+    return sum(
+        (para(tahsis.get("allocatedAmountSet"))
+         for tahsis in satir.get("discountAllocations") or []),
+        SIFIR,
+    )
+
+
 @dataclass
 class Kalem:
     ad: str
@@ -203,11 +219,19 @@ def _alici_cikar(siparis: dict) -> tuple[Alici, list[str]]:
             f"Kurumsal sipariş görünüyor ({unvan}) — VKN ve vergi dairesi girilmeli."
         )
 
+    # Adresin ikinci satırı (site/apartman/daire) faturaya yazılmalı;
+    # müşterilerin çoğu bina bilgisini oraya giriyor.
+    adres_satirlari = [
+        (adres.get("address1") or "").strip(),
+        (adres.get("address2") or "").strip(),
+    ]
+    tam_adres = " ".join(parca for parca in adres_satirlari if parca)
+
     alici = Alici(
         ad=ad,
         soyad=soyad,
         unvan=unvan,
-        adres=(adres.get("address1") or "").strip(),
+        adres=tam_adres,
         ilce=ilce,
         sehir=sehir,
         posta_kodu=posta,
@@ -224,12 +248,15 @@ def _kalemleri_cikar(siparis: dict, kdv_orani: int) -> tuple[list[Kalem], list[s
     bolen = Decimal(1) + oran
 
     # 1) İade sonrası kalan miktarlar üzerinden KDV dahil satır tutarları.
+    #    Tutar indirim tahsisleri düşülerek bulunur (bkz. _tahsis_toplami).
     ham: list[tuple[str, Decimal, Decimal]] = []
     for satir in siparis.get("lineItems", {}).get("nodes", []):
         miktar = Decimal(str(satir.get("currentQuantity", satir.get("quantity", 0))))
         if miktar <= 0:
             continue
-        toplam = para(satir.get("discountedTotalSet"))
+        toplam = para(satir.get("originalTotalSet")) - _tahsis_toplami(satir)
+        if toplam < SIFIR:
+            toplam = SIFIR
         if satir.get("currentQuantity") not in (None, satir.get("quantity")):
             # Kısmi iade: kalan miktara orantıla.
             asil = Decimal(str(satir.get("quantity", 1)))
