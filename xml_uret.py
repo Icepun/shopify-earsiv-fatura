@@ -120,6 +120,15 @@ def uret(numaralar: list[str], baslangic: str = "", bitis: str = "") -> int:
         uretilen.append((fatura, belge_no, ettn, ad))
         toplam_tutar += float(fatura.toplam)
 
+        # Üretim anında kaydediyoruz. Portal bir UUID'yi bir kez kabul ediyor;
+        # yükleme başarılı olup etiketleme unutulursa iz kalmazsa aynı sipariş
+        # için ikinci bir fatura üretilir. Durum 'taslak', onaydan sonra
+        # --etiketle ile 'imzalandi'ya çekiliyor.
+        depo.kaydet(
+            siparis_id=siparis["id"], siparis_no=fatura.siparis_no,
+            durum="taslak", ettn=ettn, tutar=f"{fatura.toplam:.2f}",
+        )
+
         # Portala gitmeden önce göze çarpması gerekenler
         if not fatura.alici.ilce:
             uyarilar.append(f"{fatura.siparis_no}: ilçe boş")
@@ -157,7 +166,13 @@ def uret(numaralar: list[str], baslangic: str = "", bitis: str = "") -> int:
             f"{fatura.siparis_no:10}{belge_no:20}{fatura.matrah:>10}"
             f"{fatura.kdv:>9}{fatura.toplam:>10}  {alici}"
         )
-    satirlar += ["", f"TOPLAM: {len(uretilen)} fatura, {toplam_tutar:.2f} TL"]
+    satirlar += [
+        "", f"TOPLAM: {len(uretilen)} fatura, {toplam_tutar:.2f} TL",
+        "",
+        "Not: Portal her UUID'yi bir kez kabul eder. Bir dosya yüklendikten",
+        "sonra (portaldan silinse bile) aynısı tekrar yüklenemez; yeniden",
+        "denemek gerekirse bu betiği yeniden çalıştır, yeni UUID üretilir.",
+    ]
     if uyarilar:
         satirlar += ["", "Gözden geçir:"] + [f"  - {u}" for u in uyarilar]
     if atlanan:
