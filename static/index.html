@@ -216,6 +216,10 @@
         <label class="kutucuk" style="font-size:13px;color:var(--soluk)">
           <input type="checkbox" id="hepsi-goster"> Faturalananları da göster
         </label>
+        <label class="kutucuk" style="font-size:13px;color:var(--soluk)">
+          <input type="checkbox" id="gizli-goster"> Gizlenenleri göster
+          <span id="gizli-sayi" class="kalem"></span>
+        </label>
       </div>
       <div class="surec" id="surec-getir"><i></i></div>
     </div>
@@ -225,6 +229,8 @@
         <label style="font-size:13px"><input type="checkbox" id="hepsi"> Tümünü seç</label>
         <span style="flex:1"></span>
         <span id="secim-ozet" class="kalem"></span>
+        <button id="gizle" disabled>Seçilenleri Gizle</button>
+        <button id="gizleme-kaldir" style="display:none">Gizlemeyi Kaldır</button>
         <button class="birincil" id="gozden-gecir" disabled>Seçilenleri Gözden Geçir</button>
       </div>
       <table>
@@ -434,6 +440,7 @@ const DURUMLAR = {
   bekliyor:     ['<span class="rozet r-bos">faturalanmadı</span>', true],
   xml_uretildi: ['<span class="rozet r-uyari">XML üretildi</span>', true],
   faturalandi:  ['<span class="rozet r-iyi">faturalandı</span>', false],
+  gizli:        ['<span class="rozet r-bos">gizli</span>', true],
 };
 
 function ciz() {
@@ -480,7 +487,9 @@ function secimOzeti() {
   if (!secilenler.length) el.textContent = "Hiç sipariş seçilmedi";
   else sayiAkit(el, sonToplam, toplam, (v) => `${secilenler.length} sipariş · ${v.toFixed(2)} ₺`);
   sonToplam = toplam;
-  $("#gozden-gecir").disabled = secilenler.length === 0;
+  $("#gozden-gecir").disabled = secilenler.length === 0
+    || secilenler.some((f) => f.durum === "gizli");
+  $("#gizle").disabled = secilenler.length === 0;
 }
 
 document.addEventListener("click", (olay) => {
@@ -528,6 +537,7 @@ $("#getir").addEventListener("click", async () => {
     if ($("#baslangic").value) sorgu.set("baslangic", $("#baslangic").value);
     if ($("#bitis").value) sorgu.set("bitis", $("#bitis").value);
     if ($("#hepsi-goster").checked) sorgu.set("hepsi", "true");
+    if ($("#gizli-goster").checked) sorgu.set("gizliler", "true");
 
     const veri = await cagir("/api/siparisler?" + sorgu.toString());
     faturalar = veri.faturalar;
@@ -538,6 +548,8 @@ $("#getir").addEventListener("click", async () => {
     $("#ozet").textContent = veri.adet
       ? `${veri.adet} sipariş · ${veri.bekleyen} tanesi faturalanmamış`
       : "Sipariş bulunamadı";
+    $("#gizli-sayi").textContent = veri.gizli_toplam ? `(${veri.gizli_toplam})` : "";
+    $("#gizleme-kaldir").style.display = $("#gizli-goster").checked ? "" : "none";
     if (!veri.adet) mesaj("Bu aralıkta sipariş bulunamadı.", "iyi");
     if (veri.sinir_doldu)
       mesaj(`Liste ${veri.sinir} siparişte kesildi. Tarih aralığını daraltıp parça parça ilerle.`, "uyari");
@@ -625,6 +637,33 @@ $("#gozden-gecir").addEventListener("click", async () => {
     gorunum("onizleme");
   } catch (h) { mesaj(h.message, "hata"); }
   dugme.disabled = false;
+});
+
+$("#gizle").addEventListener("click", async () => {
+  const secilenler = faturalar.filter((f) => secili.has(f.siparis_id));
+  if (!secilenler.length) return;
+  if (!confirm(`${secilenler.length} sipariş listeden gizlenecek. "Gizlenenleri göster" ile geri alabilirsin. Devam?`)) return;
+  try {
+    const veri = await cagir("/api/gizle", {
+      method: "POST", body: JSON.stringify({ siparis_idler: secilenler.map((f) => f.siparis_id) }),
+    });
+    mesaj(`${veri.gizlenen} sipariş gizlendi.`, "iyi");
+    secili.clear();
+    $("#getir").click();
+  } catch (h) { mesaj(h.message, "hata"); }
+});
+
+$("#gizleme-kaldir").addEventListener("click", async () => {
+  const secilenler = faturalar.filter((f) => secili.has(f.siparis_id) && f.durum === "gizli");
+  if (!secilenler.length) return mesaj("Gizlenmiş sipariş seçin.", "uyari");
+  try {
+    const veri = await cagir("/api/gizlemeyi-kaldir", {
+      method: "POST", body: JSON.stringify({ siparis_idler: secilenler.map((f) => f.siparis_id) }),
+    });
+    mesaj(`${veri.kaldirilan} siparişin gizlemesi kaldırıldı.`, "iyi");
+    secili.clear();
+    $("#getir").click();
+  } catch (h) { mesaj(h.message, "hata"); }
 });
 
 $("#onizleme-geri").addEventListener("click", () => gorunum("liste"));

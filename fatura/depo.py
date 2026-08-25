@@ -26,6 +26,15 @@ CREATE TABLE IF NOT EXISTS faturalar (
     guncelleme   TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS faturalar_durum ON faturalar(durum);
+
+-- Listeye hiç düşmesin istenen siparişler (deneme siparişleri vb.).
+-- Faturalanmışlardan ayrı tutuluyor: gizlemek fatura kesmek demek değil,
+-- ve tek tıkla geri alınabilmesi gerekiyor.
+CREATE TABLE IF NOT EXISTS gizlenenler (
+    siparis_id   TEXT PRIMARY KEY,
+    siparis_no   TEXT,
+    olusturma    TEXT NOT NULL
+);
 """
 
 
@@ -104,6 +113,34 @@ def islenmis_idler() -> set[str]:
             "SELECT siparis_id FROM faturalar WHERE durum IN ('taslak', 'imzalandi')"
         ).fetchall()
     return {satir["siparis_id"] for satir in satirlar}
+
+
+def gizle(siparis_id: str, siparis_no: str = "") -> None:
+    with baglanti() as baglan:
+        baglan.execute(
+            "INSERT INTO gizlenenler (siparis_id, siparis_no, olusturma) "
+            "VALUES (?, ?, ?) ON CONFLICT(siparis_id) DO NOTHING",
+            (siparis_id, siparis_no, _simdi()),
+        )
+
+
+def gizlemeyi_kaldir(siparis_id: str) -> None:
+    with baglanti() as baglan:
+        baglan.execute("DELETE FROM gizlenenler WHERE siparis_id = ?", (siparis_id,))
+
+
+def gizli_idler() -> set[str]:
+    with baglanti() as baglan:
+        satirlar = baglan.execute("SELECT siparis_id FROM gizlenenler").fetchall()
+    return {satir["siparis_id"] for satir in satirlar}
+
+
+def gizlenenler() -> list[dict]:
+    with baglanti() as baglan:
+        satirlar = baglan.execute(
+            "SELECT * FROM gizlenenler ORDER BY olusturma DESC"
+        ).fetchall()
+    return [dict(satir) for satir in satirlar]
 
 
 def gecmis(limit: int = 200) -> list[dict]:

@@ -201,6 +201,7 @@ def siparisler(
     baslangic: str = "",
     bitis: str = "",
     hepsi: bool = False,
+    gizliler: bool = False,
 ) -> dict:
     """Siparişleri getirir ve her birinin fatura durumunu işaretler.
 
@@ -218,11 +219,17 @@ def siparisler(
         raise HTTPException(400, str(hata))
 
     kayitlar = {k["siparis_id"]: k for k in depo.gecmis(limit=2000)}
+    gizli = depo.gizli_idler()
     _durum["siparisler"] = {}
     _durum["faturalar"] = {}
 
     sonuc = []
     for siparis in ham:
+        # Gizlenenler listeye hiç düşmez; yalnızca "gizlenenleri göster"
+        # işaretliyken, geri almak için görünürler.
+        gizli_mi = siparis["id"] in gizli
+        if gizli_mi and not gizliler:
+            continue
         fatura = siparisi_faturaya_cevir(siparis)
         _durum["siparisler"][siparis["id"]] = siparis
         _durum["faturalar"][siparis["id"]] = fatura
@@ -238,7 +245,8 @@ def siparisler(
             durum = "bekliyor"
 
         satir = _fatura_sozlugu(fatura)
-        satir["durum"] = durum
+        satir["durum"] = "gizli" if gizli_mi else durum
+        satir["gizli"] = gizli_mi
         satir["belge_no"] = (kayit or {}).get("belge_no") or ""
         satir["ettn"] = (kayit or {}).get("ettn") or ""
         sonuc.append(satir)
@@ -247,6 +255,7 @@ def siparisler(
         "adet": len(sonuc),
         "faturalar": sonuc,
         "bekleyen": sum(1 for x in sonuc if x["durum"] == "bekliyor"),
+        "gizli_toplam": len(gizli),
         "sinir_doldu": len(ham) >= limit,
         "sinir": limit,
     }
@@ -417,6 +426,25 @@ def bekleyenler() -> dict:
         "ettnsiz": sum(1 for satir in satirlar if not satir.get("ettn")),
         "taslaklar": satirlar,
     }
+
+
+@uygulama.post("/api/gizle")
+def gizle(istek: IsaretIstegi) -> dict:
+    """Seçilen siparişleri listeden kalıcı olarak çıkarır (deneme siparişleri).
+
+    Fatura durumuna dokunmaz; tek tıkla geri alınabilir.
+    """
+    for siparis_id in istek.siparis_idler:
+        fatura = _durum["faturalar"].get(siparis_id)
+        depo.gizle(siparis_id, fatura.siparis_no if fatura else "")
+    return {"gizlenen": len(istek.siparis_idler), "toplam": len(depo.gizli_idler())}
+
+
+@uygulama.post("/api/gizlemeyi-kaldir")
+def gizlemeyi_kaldir(istek: IsaretIstegi) -> dict:
+    for siparis_id in istek.siparis_idler:
+        depo.gizlemeyi_kaldir(siparis_id)
+    return {"kaldirilan": len(istek.siparis_idler), "toplam": len(depo.gizli_idler())}
 
 
 @uygulama.get("/api/tani")

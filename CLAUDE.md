@@ -300,6 +300,37 @@ Kalıcı veri zaten sunucu tarafında.
 .exe **imzalı değil** — Windows SmartScreen ilk açılışta "bilinmeyen
 yayımcı" diyecek. Kod imzalama sertifikası alınmadıkça bu sürecek.
 
+## Sipariş gizleme
+
+Deneme siparişleri listeyi kirletmesin diye kalıcı gizleme var:
+`depo.gizlenenler` tablosu, `/api/gizle` ve `/api/gizlemeyi-kaldir`.
+Gizlenenler listeye hiç düşmez; "Gizlenenleri göster" işaretlenince
+`gizli` rozetiyle görünür ve tek tıkla geri alınır.
+
+Fatura durumundan ayrı tutuluyor — gizlemek fatura kesmek değil, ve
+yanlışlıkla gizlenen bir siparişin kurtarılabilmesi gerekiyor.
+
+## Ayarların saklanması — iki konum
+
+Kullanıcının makinesinde `%APPDATA%\Magicland Fatura` içindeki ayar
+dosyaları **zaman zaman görünmez oldu**: uygulamanın açılış günlüğü
+`dosya_var=False` derken aynı dosya diskte duruyordu. Defender tehdit kaydı
+yok, kontrollü klasör erişimi kapalı, OneDrive çalışmıyor — sebep
+bulunamadı, bu makineye özgü bir şey.
+
+Bu yüzden `config.ayar_konumlari()` iki yer döner: **.exe'nin yanı**
+(birincil, veritabanı da orada) ve **APPDATA** (ikincil). `kaydet()` her
+ikisine de yazar, `yeniden_yukle()` dördüne birden bakar
+(ayarlar + yedek × 2 konum) ve dolu olan ilkini alır.
+
+Ek korumalar:
+- `KORUNAN_ALANLAR`: kimlik alanları boş gelirse **eski değer korunur**.
+  Boş bir formu kaydetmek eskiden her şeyi siliyordu.
+- `ayarlar.yedek.json`: dolu her kayıtta yazılır.
+- Yazma atomik: geçici dosya + `os.replace`.
+- `baslangic.log`: her açılışta hangi konumda ne bulunduğu yazılır.
+  Yine olursa **önce buraya bak**.
+
 ## Panel akışı — taslaklar "kaybolmaz"
 
 Taslak oluşturulunca satırlar 1. adım tablosundan düşer (aynı siparişe ikinci
