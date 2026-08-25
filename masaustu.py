@@ -83,6 +83,7 @@ def sunucuyu_bekle(port: int, saniye: float = 25.0) -> bool:
 
 def main() -> int:
     guncelleme.acilisi_gunlukle()
+    config.taniyi_gunlukle()
     # Bir önceki güncellemeden kalan .eski.exe varsa şimdi silinebilir.
     guncelleme.eski_surumu_temizle()
 

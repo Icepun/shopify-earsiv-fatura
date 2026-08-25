@@ -419,6 +419,12 @@ def bekleyenler() -> dict:
     }
 
 
+@uygulama.get("/api/tani")
+def tani() -> dict:
+    """Ayarların nereden okunduğunu döner (ayarlar ekranında gösteriliyor)."""
+    return config.tani()
+
+
 @uygulama.get("/api/gecmis")
 def gecmis() -> dict:
     return {"kayitlar": depo.gecmis()}

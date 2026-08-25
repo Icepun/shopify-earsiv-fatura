@@ -366,6 +366,7 @@
     </div>
 
     <div class="sinav" id="a-sinav"></div>
+    <div class="yardim" id="a-tani" style="margin-bottom:12px"></div>
     <div class="pencere-alt">
       <button class="birincil" id="a-kaydet" disabled>Kaydet</button>
       <button id="a-sina" disabled>Shopify Bağlantısını Sına</button>
@@ -741,7 +742,19 @@ function ayarFormu() {
   return gonder;
 }
 
-$("#ayarlar-ac").addEventListener("click", () => $("#ayarlar-ortu").classList.add("acik"));
+async function taniyiGoster() {
+  try {
+    const t = await cagir("/api/tani");
+    $("#a-tani").textContent =
+      `Ayarlar şurada: ${t.klasor} · dosya ${t.dosya_var ? t.dosya_boyutu + " bayt" : "YOK"}`
+      + (t.yedek_var ? ` · yedek ${t.yedek_boyutu} bayt` : " · yedek yok");
+  } catch { $("#a-tani").textContent = ""; }
+}
+
+$("#ayarlar-ac").addEventListener("click", () => {
+  $("#ayarlar-ortu").classList.add("acik");
+  taniyiGoster();
+});
 $("#a-kapat").addEventListener("click", () => {
   $("#ayarlar-ortu").classList.remove("acik"); $("#a-sinav").innerHTML = "";
 });

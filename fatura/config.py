@@ -24,7 +24,7 @@ from dotenv import dotenv_values
 
 KOK = Path(__file__).resolve().parent.parent
 
-SURUM = "1.1.4"
+SURUM = "1.1.5"
 UYGULAMA_ADI = "Magicland Fatura"
 GITHUB_DEPO = "Icepun/shopify-earsiv-fatura"
 
@@ -248,6 +248,50 @@ def kaydet(yeni: dict) -> dict:
 
 def ayarlar() -> dict:
     return dict(_ayarlar)
+
+
+def tani() -> dict:
+    """Ayarların nereden okunduğunu anlatır.
+
+    Ayarlar bazı açılışlarda boş geliyordu ve sebebi buradan görülemedi;
+    bu bilgi hem `baslangic.log`'a yazılıyor hem de ayarlar ekranında
+    gösteriliyor ki hangi dosyanın okunduğu tartışmasız belli olsun.
+    """
+    yol = ayar_dosyasi()
+    yedek = yol.with_name("ayarlar.yedek.json")
+    return {
+        "paketlenmis": paketlenmis(),
+        "appdata": os.getenv("APPDATA") or "",
+        "kullanici": os.getenv("USERNAME") or "",
+        "klasor": str(veri_klasoru()),
+        "ayar_dosyasi": str(yol),
+        "dosya_var": yol.exists(),
+        "dosya_boyutu": yol.stat().st_size if yol.exists() else 0,
+        "yedek_var": yedek.exists(),
+        "yedek_boyutu": yedek.stat().st_size if yedek.exists() else 0,
+        "okunan_magaza": _ayarlar.get("shopify_magaza", ""),
+        "okunan_tckn": _ayarlar.get("satici_tckn", ""),
+    }
+
+
+def taniyi_gunlukle() -> None:
+    """Her açılışta teşhis satırını dosyaya yazar."""
+    try:
+        from datetime import datetime
+
+        d = tani()
+        satir = (
+            f"{datetime.now():%Y-%m-%d %H:%M:%S} surum={SURUM} "
+            f"paketlenmis={d['paketlenmis']} kullanici={d['kullanici']} "
+            f"klasor={d['klasor']} dosya_var={d['dosya_var']} "
+            f"boyut={d['dosya_boyutu']} yedek={d['yedek_var']}/{d['yedek_boyutu']} "
+            f"magaza={d['okunan_magaza'] or '(BOS)'} "
+            f"tckn={d['okunan_tckn'] or '(BOS)'}\n"
+        )
+        with (veri_klasoru() / "baslangic.log").open("a", encoding="utf-8") as f:
+            f.write(satir)
+    except Exception:
+        pass
 
 
 def _globalleri_tazele() -> None:
