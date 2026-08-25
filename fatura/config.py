@@ -24,7 +24,7 @@ from dotenv import dotenv_values
 
 KOK = Path(__file__).resolve().parent.parent
 
-SURUM = "1.1.5"
+SURUM = "1.1.6"
 UYGULAMA_ADI = "Magicland Fatura"
 GITHUB_DEPO = "Icepun/shopify-earsiv-fatura"
 
@@ -90,18 +90,36 @@ def paketlenmis() -> bool:
     return getattr(sys, "frozen", False)
 
 
-def veri_klasoru() -> Path:
-    """Ayarların ve veritabanının durduğu klasör.
+def ayar_konumlari() -> list[Path]:
+    """Ayarların yazılacağı/aranacağı klasörler, öncelik sırasıyla.
 
-    .exe tek dosya olarak çalışırken program klasörü geçici bir dizine
-    açılıyor ve kapanışta siliniyor; ayarları oraya yazmak olmaz. Kaynaktan
-    çalışırken proje klasörü kalıyor ki geliştirme akışı bozulmasın.
+    Tek bir yere güvenmiyoruz: kullanıcının makinesinde `%APPDATA%\\Magicland
+    Fatura` içindeki ayar dosyaları zaman zaman görünmez oldu ve uygulama
+    ayarları sıfırdan açtı. Defender, OneDrive ve kontrollü klasör erişimi
+    kapalıydı; sebep bulunamadı. Bu yüzden ayarlar hem .exe'nin yanına hem
+    APPDATA'ya yazılıyor, okurken hangisi sağlamsa o alınıyor.
     """
-    if not paketlenmis():
-        return KOK
-    taban = os.getenv("APPDATA") or os.getenv("LOCALAPPDATA") or str(Path.home())
-    klasor = Path(taban) / UYGULAMA_ADI
-    klasor.mkdir(parents=True, exist_ok=True)
+    konumlar: list[Path] = []
+    if paketlenmis():
+        # .exe'nin bulunduğu klasör: kurulum yeri, kalıcı ve yazılabilir.
+        konumlar.append(Path(sys.executable).resolve().parent)
+    else:
+        konumlar.append(KOK)
+    taban = os.getenv("APPDATA") or os.getenv("LOCALAPPDATA")
+    if taban:
+        ikincil = Path(taban) / UYGULAMA_ADI
+        if ikincil not in konumlar:
+            konumlar.append(ikincil)
+    return konumlar
+
+
+def veri_klasoru() -> Path:
+    """Veritabanı ve üretilen dosyalar için ana klasör."""
+    klasor = ayar_konumlari()[0]
+    try:
+        klasor.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        pass
     return klasor
 
 
@@ -172,23 +190,27 @@ def yeniden_yukle() -> dict:
     """Ayarları diskten okur ve modül değişkenlerini tazeler."""
     global _ayarlar
 
-    yol = ayar_dosyasi()
-    yedek = yol.with_name("ayarlar.yedek.json")
+    adaylar = []
+    for klasor in ayar_konumlari():
+        adaylar.append(klasor / "ayarlar.json")
+        adaylar.append(klasor / "ayarlar.yedek.json")
 
     kayitli = None
-    for aday in (yol, yedek):
-        if not aday.exists():
-            continue
+    for aday in adaylar:
         try:
+            if not aday.exists():
+                continue
             okunan = json.loads(aday.read_text(encoding="utf-8"))
         except (ValueError, OSError):
             continue
-        # Boş/anlamsız bir dosya yüzünden her şeyi sıfırlamıyoruz; yedeğe
-        # düşüyoruz. (Ayarların "kendiliğinden gitmesi" böyle görünüyordu.)
-        if isinstance(okunan, dict) and okunan.get("shopify_magaza"):
+        if not isinstance(okunan, dict):
+            continue
+        # Dolu bir takım bulunca dururuz; boş/anlamsız bir dosya yüzünden
+        # her şeyi sıfırlamıyoruz, diğer konumlara bakmaya devam ediyoruz.
+        if okunan.get("shopify_magaza"):
             kayitli = okunan
             break
-        if kayitli is None and isinstance(okunan, dict):
+        if kayitli is None:
             kayitli = okunan
 
     if kayitli is not None:
@@ -223,23 +245,23 @@ def kaydet(yeni: dict) -> dict:
         else:
             guncel[ad] = str(deger).strip()
 
-    yol = ayar_dosyasi()
-    yol.parent.mkdir(parents=True, exist_ok=True)
-    # Önce geçici dosyaya yazıp yerine koyuyoruz: yazma sırasında uygulama
-    # kapanırsa yarım kalmış bir ayar dosyası kalmasın (o dosya okunamayınca
-    # bütün ayarlar sıfırlanmış görünüyor).
     metin = json.dumps(guncel, ensure_ascii=False, indent=2)
-    gecici = yol.with_suffix(".json.yeni")
-    gecici.write_text(metin, encoding="utf-8")
-    os.replace(gecici, yol)
+    dolu = bool(guncel.get("shopify_magaza"))
 
-    # Dolu bir ayar takımını ayrıca yedekliyoruz; asıl dosya bir şekilde
-    # bozulur ya da boşalırsa açılışta buradan geri alınıyor.
-    if guncel.get("shopify_magaza"):
+    # Her konuma yazıyoruz (bkz. ayar_konumlari): biri kaybolursa diğerinden
+    # geri geliyor. Önce geçici dosyaya yazıp yerine koyuyoruz ki yazma
+    # yarıda kesilirse bozuk dosya kalmasın.
+    for klasor in ayar_konumlari():
         try:
-            yol.with_name("ayarlar.yedek.json").write_text(metin, encoding="utf-8")
+            klasor.mkdir(parents=True, exist_ok=True)
+            gecici = klasor / "ayarlar.json.yeni"
+            gecici.write_text(metin, encoding="utf-8")
+            os.replace(gecici, klasor / "ayarlar.json")
+            if dolu:
+                (klasor / "ayarlar.yedek.json").write_text(metin, encoding="utf-8")
         except OSError:
-            pass
+            # Bir konum yazılamıyorsa diğerleri yeter; sessizce geç.
+            continue
 
     globals()["_ayarlar"] = guncel
     _globalleri_tazele()
@@ -257,18 +279,20 @@ def tani() -> dict:
     bu bilgi hem `baslangic.log`'a yazılıyor hem de ayarlar ekranında
     gösteriliyor ki hangi dosyanın okunduğu tartışmasız belli olsun.
     """
-    yol = ayar_dosyasi()
-    yedek = yol.with_name("ayarlar.yedek.json")
+    konumlar = []
+    for klasor in ayar_konumlari():
+        a = klasor / "ayarlar.json"
+        y = klasor / "ayarlar.yedek.json"
+        konumlar.append({
+            "klasor": str(klasor),
+            "dosya": a.stat().st_size if a.exists() else 0,
+            "yedek": y.stat().st_size if y.exists() else 0,
+        })
     return {
         "paketlenmis": paketlenmis(),
-        "appdata": os.getenv("APPDATA") or "",
         "kullanici": os.getenv("USERNAME") or "",
         "klasor": str(veri_klasoru()),
-        "ayar_dosyasi": str(yol),
-        "dosya_var": yol.exists(),
-        "dosya_boyutu": yol.stat().st_size if yol.exists() else 0,
-        "yedek_var": yedek.exists(),
-        "yedek_boyutu": yedek.stat().st_size if yedek.exists() else 0,
+        "konumlar": konumlar,
         "okunan_magaza": _ayarlar.get("shopify_magaza", ""),
         "okunan_tckn": _ayarlar.get("satici_tckn", ""),
     }
@@ -280,12 +304,13 @@ def taniyi_gunlukle() -> None:
         from datetime import datetime
 
         d = tani()
+        yerler = " ".join(
+            f"[{k['klasor']}: {k['dosya']}/{k['yedek']}]" for k in d["konumlar"]
+        )
         satir = (
             f"{datetime.now():%Y-%m-%d %H:%M:%S} surum={SURUM} "
             f"paketlenmis={d['paketlenmis']} kullanici={d['kullanici']} "
-            f"klasor={d['klasor']} dosya_var={d['dosya_var']} "
-            f"boyut={d['dosya_boyutu']} yedek={d['yedek_var']}/{d['yedek_boyutu']} "
-            f"magaza={d['okunan_magaza'] or '(BOS)'} "
+            f"{yerler} magaza={d['okunan_magaza'] or '(BOS)'} "
             f"tckn={d['okunan_tckn'] or '(BOS)'}\n"
         )
         with (veri_klasoru() / "baslangic.log").open("a", encoding="utf-8") as f:
