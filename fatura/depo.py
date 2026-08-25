@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS faturalar (
     siparis_id   TEXT PRIMARY KEY,
     siparis_no   TEXT NOT NULL,
     ettn         TEXT,
+    belge_no     TEXT,
     durum        TEXT NOT NULL,           -- taslak | imzalandi | hata
     tutar        TEXT,
     hata         TEXT,
@@ -46,6 +47,10 @@ def baglanti():
 def hazirla() -> None:
     with baglanti() as baglan:
         baglan.executescript(SEMA)
+        # Eski veritabanlarında bu sütun yok; sessizce ekliyoruz.
+        sutunlar = {s[1] for s in baglan.execute("PRAGMA table_info(faturalar)")}
+        if "belge_no" not in sutunlar:
+            baglan.execute("ALTER TABLE faturalar ADD COLUMN belge_no TEXT")
 
 
 def kaydet(
@@ -55,21 +60,25 @@ def kaydet(
     ettn: str = "",
     tutar: str = "",
     hata: str = "",
+    belge_no: str = "",
 ) -> None:
     with baglanti() as baglan:
         baglan.execute(
             """
             INSERT INTO faturalar
-                (siparis_id, siparis_no, ettn, durum, tutar, hata, olusturma, guncelleme)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                (siparis_id, siparis_no, ettn, belge_no, durum, tutar, hata,
+                 olusturma, guncelleme)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(siparis_id) DO UPDATE SET
                 ettn       = excluded.ettn,
+                belge_no   = excluded.belge_no,
                 durum      = excluded.durum,
                 tutar      = excluded.tutar,
                 hata       = excluded.hata,
                 guncelleme = excluded.guncelleme
             """,
-            (siparis_id, siparis_no, ettn, durum, tutar, hata, _simdi(), _simdi()),
+            (siparis_id, siparis_no, ettn, belge_no, durum, tutar, hata,
+             _simdi(), _simdi()),
         )
 
 

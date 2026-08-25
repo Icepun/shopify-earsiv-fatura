@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
-from decimal import Decimal
+import os
+import sys
+import uuid
+import zipfile
+from datetime import datetime
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
@@ -11,41 +14,21 @@ from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import config, depo, shopify_api
+from . import config, depo, shopify_api, ubl
 from . import guncelleme as guncelleme_modulu
 from .donustur import Fatura, siparisi_faturaya_cevir
-from .gib import GibHatasi, GibPortal
 from .guncelleme import guncelleme_kontrol
-from .payload import gib_payloadu
 from .shopify_api import Shopify, ShopifyHatasi
 
 uygulama = FastAPI(title="Shopify → e-Arşiv Fatura")
 # Paketlenmiş .exe içinde static/ geçici klasöre açılır; yolu config verir.
 KOK = config.kaynak_klasoru()
 
-# Panel oturumu: GİB bağlantısı ve son çekilen siparişler bellekte tutulur.
-_durum: dict = {"gib": None, "siparisler": {}, "faturalar": {}, "oid": None, "telefon": None}
+# Panel oturumu: son çekilen siparişler ve hesaplanan faturalar bellekte.
+_durum: dict = {"siparisler": {}, "faturalar": {}}
 
 
 # ─── yardımcılar ─────────────────────────────────────────────────────
-
-
-def _gib() -> GibPortal:
-    portal = _durum.get("gib")
-    if portal is None or not portal.token:
-        if not config.GIB_KULLANICI_KODU or not config.GIB_SIFRE:
-            raise HTTPException(
-                400, "GİB kullanıcı kodu ve şifresi girilmemiş. Ayarlar'dan doldurun."
-            )
-        portal = GibPortal(
-            config.GIB_KULLANICI_KODU, config.GIB_SIFRE, config.GIB_TEST_MODU
-        )
-        try:
-            portal.giris()
-        except GibHatasi as hata:
-            raise HTTPException(400, str(hata))
-        _durum["gib"] = portal
-    return portal
 
 
 def _fatura_sozlugu(fatura: Fatura) -> dict:
@@ -102,8 +85,8 @@ class TaslakIstegi(BaseModel):
     duzeltmeler: dict[str, dict] = {}
 
 
-class ImzaIstegi(BaseModel):
-    kod: str
+class IsaretIstegi(BaseModel):
+    siparis_idler: list[str]
 
 
 # ─── uçlar ───────────────────────────────────────────────────────────
@@ -149,17 +132,9 @@ class AyarIstegi(BaseModel):
 def ayarlari_kaydet(istek: AyarIstegi) -> dict:
     config.kaydet(istek.ayarlar)
 
-    # Ayar değişince eldeki kimlikler geçersiz olabilir: Shopify tokenini ve
-    # açık GİB oturumunu bırakıyoruz. Test modu değiştiyse veritabanı da
-    # başka dosyaya kaydığı için şemayı orada da kuruyoruz.
+    # Ayar değişince Shopify tokeni geçersiz olabilir, önbelleği bırakıyoruz.
     shopify_api._token_deposu.temizle()
-    portal = _durum.get("gib")
-    if portal is not None:
-        try:
-            portal.kapat()
-        except Exception:
-            pass
-    _durum.update({"gib": None, "oid": None, "siparisler": {}, "faturalar": {}})
+    _durum.update({"siparisler": {}, "faturalar": {}})
     depo.hazirla()
     return ayarlar()
 
@@ -185,239 +160,217 @@ def baglanti_testi() -> dict:
     except ShopifyHatasi as hata:
         sonuc["shopify"] = {"durum": "hata", "mesaj": str(hata)}
 
-    portal = GibPortal(
-        config.GIB_KULLANICI_KODU, config.GIB_SIFRE, config.GIB_TEST_MODU
-    )
-    try:
-        portal.giris()
-        bilgi = portal.kullanici_bilgileri()
-        unvan = (bilgi.get("unvan")
-                 or f"{bilgi.get('adi', '')} {bilgi.get('soyadi', '')}").strip()
-        sonuc["gib"] = {
-            "durum": "iyi",
-            "mesaj": f"Giriş başarılı — {unvan or 'mükellef adı yok'}"
-                     f" (VKN/TCKN {bilgi.get('vknTckn', '—')}).",
-            "telefon_var": bool(bilgi.get("telefon")),
-        }
-    except GibHatasi as hata:
-        sonuc["gib"] = {"durum": "hata", "mesaj": str(hata)}
-    finally:
-        try:
-            portal.kapat()
-        except Exception:
-            pass
-
     return sonuc
 
 
 @uygulama.get("/api/siparisler")
 def siparisler(
     tetikleyici: str = "fulfilled",
-    limit: int = 100,
+    limit: int = 200,
     baslangic: str = "",
     bitis: str = "",
+    hepsi: bool = False,
 ) -> dict:
+    """Siparişleri getirir ve her birinin fatura durumunu işaretler.
+
+    hepsi=True ise faturalanmış siparişler de listelenir; onlar seçilemez,
+    yalnızca durumu görünsün diye gösterilir.
+    """
     try:
         istemci = Shopify()
         ham = istemci.faturalanmamis_siparisler(
             tetikleyici=tetikleyici, limit=limit,
             baslangic=baslangic, bitis=bitis,
+            yalnizca_faturasiz=not hepsi,
         )
     except ShopifyHatasi as hata:
         raise HTTPException(400, str(hata))
 
-    islenmis = depo.islenmis_idler()
+    kayitlar = {k["siparis_id"]: k for k in depo.gecmis(limit=2000)}
     _durum["siparisler"] = {}
     _durum["faturalar"] = {}
 
     sonuc = []
     for siparis in ham:
-        if siparis["id"] in islenmis:
-            continue
         fatura = siparisi_faturaya_cevir(siparis)
         _durum["siparisler"][siparis["id"]] = siparis
         _durum["faturalar"][siparis["id"]] = fatura
-        sonuc.append(_fatura_sozlugu(fatura))
 
-    # Shopify tarafı limitte kesildiyse panel bunu sessizce yutmasın.
-    return {"adet": len(sonuc), "faturalar": sonuc,
-            "sinir_doldu": len(ham) >= limit, "sinir": limit}
+        kayit = kayitlar.get(siparis["id"])
+        etiketli = config.ETIKET in (siparis.get("tags") or [])
+        kayit_durumu = (kayit or {}).get("durum")
+        if etiketli or kayit_durumu == "imzalandi":
+            durum = "faturalandi"
+        elif kayit_durumu == "taslak":
+            durum = "xml_uretildi"
+        else:
+            durum = "bekliyor"
+
+        satir = _fatura_sozlugu(fatura)
+        satir["durum"] = durum
+        satir["belge_no"] = (kayit or {}).get("belge_no") or ""
+        satir["ettn"] = (kayit or {}).get("ettn") or ""
+        sonuc.append(satir)
+
+    return {
+        "adet": len(sonuc),
+        "faturalar": sonuc,
+        "bekleyen": sum(1 for x in sonuc if x["durum"] == "bekliyor"),
+        "sinir_doldu": len(ham) >= limit,
+        "sinir": limit,
+    }
 
 
-def _tarih_araligi() -> tuple[str, str]:
-    """Taslak sorgusu için geniş bir aralık (faturalar geçmiş tarihli olabilir)."""
-    bugun = datetime.now()
-    return (
-        (bugun - timedelta(days=60)).strftime("%d/%m/%Y"),
-        bugun.strftime("%d/%m/%Y"),
-    )
+@uygulama.post("/api/onizleme")
+def onizleme(istek: TaslakIstegi) -> dict:
+    """Seçilenleri düzeltmelerle birlikte gözden geçirmeye hazırlar.
 
-
-@uygulama.post("/api/taslaklar")
-def taslak_olustur(istek: TaslakIstegi) -> dict:
-    portal = _gib()
-    baslangic, bitis = _tarih_araligi()
-
-    # ETTN'i GİB atadığı ve yanıtta dönmediği için, oluşturmadan önceki
-    # taslak kümesini alıp sonrasındaki farktan eşleştiriyoruz.
-    try:
-        onceki_ettnler = portal.taslak_ettnleri(baslangic, bitis)
-    except GibHatasi:
-        onceki_ettnler = set()
-
-    sonuclar = []
-    olusturulanlar = []  # (siparis_id, fatura) — oluşturma sırasıyla
-
+    XML üretmez; kullanıcı kontrol ettikten sonra /api/xml-uret çağrılır.
+    """
+    sonuc = []
     for siparis_id in istek.siparis_idler:
         fatura = _durum["faturalar"].get(siparis_id)
         if fatura is None:
-            sonuclar.append(
-                {"siparis_id": siparis_id, "durum": "hata",
-                 "hata": "Sipariş bellekte yok, listeyi yenileyin."}
-            )
-            continue
+            raise HTTPException(400, "Sipariş bellekte yok, listeyi yenileyin.")
+        _duzeltmeleri_uygula(fatura, istek.duzeltmeler.get(siparis_id, {}))
+        satir = _fatura_sozlugu(fatura)
+        satir["eksikler"] = [
+            ad for ad, deger in (
+                ("ilçe", fatura.alici.ilce),
+                ("şehir", fatura.alici.sehir),
+                ("adres", fatura.alici.adres),
+                ("ad soyad", (fatura.alici.ad + fatura.alici.soyad)),
+            ) if not (deger or "").strip()
+        ]
+        sonuc.append(satir)
+    return {"adet": len(sonuc), "faturalar": sonuc}
 
+
+def _satici_ayarlardan() -> ubl.Satici:
+    a = config.ayarlar()
+    return ubl.Satici(
+        tckn=a.get("satici_tckn", ""), ad=a.get("satici_ad", ""),
+        soyad=a.get("satici_soyad", ""), unvan=a.get("satici_unvan", ""),
+        vergi_dairesi=a.get("satici_vergi_dairesi", ""),
+        mahalle=a.get("satici_mahalle", ""), bina_no=a.get("satici_bina_no", ""),
+        kapi_no=a.get("satici_kapi_no", ""), ilce=a.get("satici_ilce", ""),
+        il=a.get("satici_il", ""), posta_kodu=a.get("satici_posta_kodu", ""),
+        telefon=a.get("satici_telefon", ""), eposta=a.get("satici_eposta", ""),
+    )
+
+
+@uygulama.post("/api/xml-uret")
+def xml_uret(istek: TaslakIstegi) -> dict:
+    """Seçilen siparişler için UBL-TR XML üretir ve klasöre yazar."""
+    ayar = config.ayarlar()
+    eksik = [a for a in ("satici_tckn", "satici_ad", "satici_vergi_dairesi")
+             if not ayar.get(a)]
+    if eksik:
+        raise HTTPException(
+            400, "Ayarlar'da satıcı bilgileri eksik: TCKN, ad ve vergi dairesi."
+        )
+
+    satici = _satici_ayarlardan()
+    seri = ayar.get("fatura_seri", "MGL")
+    sira = int(ayar.get("fatura_sira", 0))
+    yil = datetime.now().year
+
+    klasor = (config.veri_klasoru() / "faturalar"
+              / datetime.now().strftime("%Y-%m-%d_%H%M"))
+    klasor.mkdir(parents=True, exist_ok=True)
+
+    uretilen = []
+    for siparis_id in istek.siparis_idler:
+        fatura = _durum["faturalar"].get(siparis_id)
+        if fatura is None:
+            continue
         _duzeltmeleri_uygula(fatura, istek.duzeltmeler.get(siparis_id, {}))
 
-        try:
-            portal.fatura_olustur(gib_payloadu(fatura))
-            olusturulanlar.append((siparis_id, fatura))
-            sonuclar.append(
-                {"siparis_id": siparis_id, "siparis_no": fatura.siparis_no,
-                 "durum": "taslak", "ettn": ""}
-            )
-        except GibHatasi as hata:
-            depo.kaydet(
-                siparis_id=siparis_id, siparis_no=fatura.siparis_no,
-                durum="hata", tutar=f"{fatura.toplam:.2f}", hata=str(hata),
-            )
-            sonuclar.append(
-                {"siparis_id": siparis_id, "siparis_no": fatura.siparis_no,
-                 "durum": "hata", "hata": str(hata)}
-            )
+        sira += 1
+        belge_no = f"{seri}{yil}{sira:09d}"
+        ettn = str(uuid.uuid4())
+        xml = ubl.ubl_fatura(fatura, satici, belge_no=belge_no, ettn=ettn)
+        ad = ubl.dosya_adi(satici.tckn, belge_no, ettn)
+        (klasor / ad).write_text(xml, encoding="utf-8")
 
-    # Yeni taslakları belge numarasına göre sırala; oluşturma sırasıyla eşleşir.
-    yeni_taslaklar = []
-    if olusturulanlar:
-        try:
-            hepsi = portal.taslaklari_getir(baslangic, bitis)
-            yeni_taslaklar = sorted(
-                (t for t in hepsi if t.get("ettn") not in onceki_ettnler),
-                key=lambda t: t.get("belgeNumarasi", ""),
-            )
-        except GibHatasi:
-            yeni_taslaklar = []
-
-    eslesti = len(yeni_taslaklar) == len(olusturulanlar)
-    for sira, (siparis_id, fatura) in enumerate(olusturulanlar):
-        ettn = yeni_taslaklar[sira].get("ettn", "") if eslesti else ""
+        # Üretim anında kaydediyoruz: portal her ETTN'yi bir kez kabul ediyor,
+        # iz kalmazsa aynı siparişe ikinci fatura üretilebilir.
         depo.kaydet(
             siparis_id=siparis_id, siparis_no=fatura.siparis_no,
             durum="taslak", ettn=ettn, tutar=f"{fatura.toplam:.2f}",
+            belge_no=belge_no,
         )
-        for sonuc in sonuclar:
-            if sonuc["siparis_id"] == siparis_id:
-                sonuc["ettn"] = ettn
+        uretilen.append({
+            "siparis_id": siparis_id, "siparis_no": fatura.siparis_no,
+            "belge_no": belge_no, "ettn": ettn, "dosya": ad,
+            "toplam": f"{fatura.toplam:.2f}",
+        })
 
-    basarili = len(olusturulanlar)
-    cevap = {"basarili": basarili, "toplam": len(sonuclar), "sonuclar": sonuclar}
-    if olusturulanlar and not eslesti:
-        cevap["uyari"] = (
-            f"{basarili} taslak oluştu ama portalda {len(yeni_taslaklar)} yeni kayıt "
-            "göründü; ETTN eşleştirmesi yapılamadı. İmzalama yine de çalışır, "
-            "sipariş-fatura eşleşmesini portaldan doğrulayın."
-        )
-    return cevap
+    if not uretilen:
+        raise HTTPException(400, "Üretilecek fatura yok, listeyi yenileyin.")
+
+    zip_adi = f"faturalar_{len(uretilen)}_adet.zip"
+    with zipfile.ZipFile(klasor / zip_adi, "w", zipfile.ZIP_DEFLATED) as z:
+        for kayit in uretilen:
+            z.write(klasor / kayit["dosya"], arcname=kayit["dosya"])
+
+    config.kaydet({"fatura_sira": sira})
+    return {
+        "adet": len(uretilen),
+        "klasor": str(klasor),
+        "zip": zip_adi,
+        "faturalar": uretilen,
+    }
 
 
-@uygulama.post("/api/sms-iste")
-def sms_iste() -> dict:
-    portal = _gib()
+class KlasorIstegi(BaseModel):
+    klasor: str
+
+
+@uygulama.post("/api/klasoru-ac")
+def klasoru_ac(istek: KlasorIstegi) -> dict:
+    """Üretilen XML'lerin klasörünü Dosya Gezgini'nde açar."""
+    kok = (config.veri_klasoru() / "faturalar").resolve()
+    yol = Path(istek.klasor)
     try:
-        oid, telefon = portal.sms_kodu_iste()
-    except GibHatasi as hata:
-        raise HTTPException(400, str(hata))
+        # Yalnızca kendi ürettiğimiz klasörler açılabilsin.
+        yol.resolve().relative_to(kok)
+    except ValueError:
+        raise HTTPException(400, "Klasör açılamadı.")
+    if sys.platform == "win32" and yol.is_dir():
+        os.startfile(str(yol))
+        return {"tamam": True}
+    return {"tamam": False}
 
-    _durum["oid"] = oid
-    _durum["telefon"] = telefon
-    gizli = f"{telefon[:3]}***{telefon[-2:]}" if len(telefon) >= 5 else telefon
-    return {"telefon": gizli, "bekleyen": len(depo.bekleyen_taslaklar())}
 
-
-@uygulama.post("/api/imzala")
-def imzala(istek: ImzaIstegi) -> dict:
-    portal = _gib()
-    oid = _durum.get("oid")
-    if not oid:
-        raise HTTPException(400, "Önce SMS kodu isteyin.")
-
-    bekleyenler = depo.bekleyen_taslaklar()
-    if not bekleyenler:
-        raise HTTPException(400, "İmzalanacak taslak yok.")
-
-    hedef_ettnler = {satir["ettn"] for satir in bekleyenler if satir["ettn"]}
-    ettnsiz = [satir["siparis_no"] for satir in bekleyenler if not satir["ettn"]]
-    if not hedef_ettnler:
-        raise HTTPException(
-            400,
-            "Bekleyen taslakların ETTN'i eşleştirilemedi. "
-            "Bu faturaları GİB portalından elle onaylayın.",
-        )
-
-    baslangic, bitis = _tarih_araligi()
-    taslaklar = portal.taslaklari_getir(baslangic, bitis)
-    imzalanacaklar = [t for t in taslaklar if t.get("ettn") in hedef_ettnler]
-
-    if not imzalanacaklar:
-        raise HTTPException(
-            400,
-            "Taslaklar GİB portalında bulunamadı. "
-            "Portalda tarih aralığını kontrol edin.",
-        )
-
-    try:
-        mesaj = portal.sms_ile_imzala(istek.kod, oid, imzalanacaklar)
-    except GibHatasi as hata:
-        raise HTTPException(400, str(hata))
-
-    _durum["oid"] = None
-
-    # İmzalananları Shopify'da etiketle.
-    imzalanan_ettnler = {t.get("ettn") for t in imzalanacaklar}
-    etiketlenen, etiket_hatalari = 0, []
+@uygulama.post("/api/isaretle")
+def isaretle(istek: IsaretIstegi) -> dict:
+    """Portala yüklenip onaylananları Shopify'da 'faturalandi' işaretler."""
     try:
         shopify = Shopify()
     except ShopifyHatasi as hata:
-        shopify = None
-        etiket_hatalari.append(str(hata))
+        raise HTTPException(400, str(hata))
 
-    for satir in bekleyenler:
-        if satir["ettn"] not in imzalanan_ettnler:
-            continue
-        depo.kaydet(
-            siparis_id=satir["siparis_id"], siparis_no=satir["siparis_no"],
-            durum="imzalandi", ettn=satir["ettn"], tutar=satir["tutar"] or "",
-        )
-        if shopify is None:
-            continue
+    kayitlar = {k["siparis_id"]: k for k in depo.gecmis(limit=2000)}
+    basarili, hatalar = 0, []
+    for siparis_id in istek.siparis_idler:
+        kayit = kayitlar.get(siparis_id) or {}
+        fatura = _durum["faturalar"].get(siparis_id)
+        siparis_no = kayit.get("siparis_no") or (
+            fatura.siparis_no if fatura else siparis_id)
         try:
-            shopify.faturalandi_isaretle(satir["siparis_id"], satir["ettn"])
-            etiketlenen += 1
+            shopify.faturalandi_isaretle(siparis_id, kayit.get("ettn") or "")
+            depo.kaydet(
+                siparis_id=siparis_id, siparis_no=siparis_no,
+                durum="imzalandi", ettn=kayit.get("ettn") or "",
+                tutar=kayit.get("tutar") or "",
+                belge_no=kayit.get("belge_no") or "",
+            )
+            basarili += 1
         except ShopifyHatasi as hata:
-            etiket_hatalari.append(f"{satir['siparis_no']}: {hata}")
+            hatalar.append(f"{siparis_no}: {hata}")
 
-    if ettnsiz:
-        etiket_hatalari.append(
-            "ETTN'i eşleşmediği için atlananlar (portaldan elle onaylayın): "
-            + ", ".join(ettnsiz)
-        )
-
-    return {
-        "mesaj": mesaj,
-        "imzalanan": len(imzalanacaklar),
-        "etiketlenen": etiketlenen,
-        "etiket_hatalari": etiket_hatalari,
-    }
+    return {"isaretlenen": basarili, "hatalar": hatalar}
 
 
 @uygulama.get("/api/bekleyenler")

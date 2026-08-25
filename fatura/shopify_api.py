@@ -224,6 +224,7 @@ class Shopify:
         limit: int = 100,
         baslangic: str = "",
         bitis: str = "",
+        yalnizca_faturasiz: bool = True,
     ) -> list[dict]:
         """Henüz faturalandırılmamış, ödemesi alınmış siparişleri getirir.
 
@@ -233,7 +234,9 @@ class Shopify:
         küçük partiler halinde faturalayabilmek için.
         """
         durum = "fulfillment_status:shipped" if tetikleyici == "fulfilled" else ""
-        parcalar = ["financial_status:paid", f"-tag:{config.ETIKET}"]
+        parcalar = ["financial_status:paid"]
+        if yalnizca_faturasiz:
+            parcalar.append(f"-tag:{config.ETIKET}")
         if durum:
             parcalar.append(durum)
         if baslangic:

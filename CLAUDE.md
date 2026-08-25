@@ -15,31 +15,65 @@ konuşuyor; yanıtları Türkçe ver.
 
 ## Amaç
 
-Portalda tek tek form doldurmayı bitirmek. Akış: siparişleri Shopify'dan çek →
-panelde gözden geçir/düzelt → toplu taslak oluştur → **tek SMS koduyla hepsini
-imzala** → Shopify'da `faturalandi` etiketle.
+Portalda tek tek form doldurmayı bitirmek. Akış (26.08.2026'dan itibaren):
+siparişleri Shopify'dan çek → panelde gözden geçir/düzelt → **UBL-TR XML
+üret** → Hepsiburada e-Faturam portalına toplu yükle → onayla → Shopify'da
+`faturalandi` etiketle.
+
+**GİB e-Arşiv Portal artık kullanılmıyor.** Kullanıcı zaten Hepsiburada
+satıcısı ve e-Faturam portalını kullanıyor; oraya XML yüklemek GİB'de SMS
+imzalamaktan basit. `gib.py` ve `payload.py` duruyor ama panele bağlı değil —
+GİB'e dönülürse diye saklanıyor, oradaki protokol bilgisi zor kazanıldı.
 
 ## Mimari
 
 ```
 masaustu.py            uygulama giriş noktası: pencere + gömülü sunucu
 derle.py               PyInstaller ile tek dosyalık .exe üretir
+yayinla.py             .exe'yi GitHub Releases'e yükler
+xml_uret.py            komut satırından toplu XML (panelin yaptığının aynısı)
 fatura/config.py       ayarlar (ayarlar.json; yoksa .env'den devralır)
-fatura/shopify_api.py  Admin GraphQL: sipariş çekme (tarih aralığı), etiket, ETTN metafield
+fatura/shopify_api.py  Admin GraphQL: sipariş çekme, tekil arama, etiketleme
 fatura/donustur.py     sipariş -> Fatura (KDV ayrıştırma, kargo dağıtımı, uyarılar)
-fatura/payload.py      Fatura -> GİB payload + tutarı yazıyla
-fatura/gib.py          GİB e-Arşiv Portal istemcisi (login/dispatch/SMS imza)
-fatura/depo.py         SQLite: durum, ETTN, hatalar
+fatura/ubl.py          Fatura -> UBL-TR 1.2 e-arşiv XML'i  ← ASIL ÇIKTI
+fatura/depo.py         SQLite: durum, ETTN, belge no, hatalar
 fatura/guncelleme.py   GitHub Releases: sürüm kontrolü, indirme, kendini değiştirme
 fatura/web.py          FastAPI panel sunucusu
-static/index.html      panel arayüzü + ayarlar penceresi (vanilla JS, tek dosya)
-kontrol.py             bağlantı sınaması (uygulamadaki "Bağlantıyı Sına" ile aynı iş)
+static/index.html      panel: liste → önizleme → XML (vanilla JS, tek dosya)
+fatura/gib.py          KULLANILMIYOR — eski GİB e-Arşiv Portal istemcisi
+fatura/payload.py      KULLANILMIYOR — eski GİB payload üreticisi
 ```
 
 Katmanlar bilinçli olarak ayrık: entegratöre geçilecek olursa yalnızca
 `gib.py` değişir, hesap mantığı aynen kalır.
 
-## GİB protokolü — zor kazanılmış bilgiler
+## Hepsiburada e-Faturam — UBL-TR XML (26.08.2026)
+
+Biçim, kullanıcının kendi hesabından indirdiği gerçek bir faturadan
+(`INT2026000000361`) çıkarıldı ve **canlı yükleme ile doğrulandı**.
+
+- `ProfileID = EARSIVFATURA`, `CustomizationID = TR1.2`, `UBLVersionID = 2.1`
+- Miktar birimi **NIU** (GİB portalındaki `C62` değil)
+- Tutar yazıyla: `Yalnız #Üç Yüz Yetmiş Dokuz Türk Lirası Doksan Dokuz Kuruş#`
+  — `#` sınırlayıcılar ve boşluklu kelimeler şart, örnekle birebir eşleşiyor
+- `CityName` = il, `CitySubdivisionName` = ilçe
+- Nihai tüketici alıcı TCKN'si `11111111111`
+- **Eleman sırası UBL şemasında bağlayıcı** — `ubl.py`'deki sıra örnekten
+  birebir alındı, oynatma
+- **İmzasız gönderiyoruz.** İmzayı portalın entegratörü (Uyumsoft) atıyor;
+  `UBLExtensions`, `cac:Signature` ve XSLT eki üretilmiyor, portal kabul etti
+- Yüklenen fatura portala **Taslak** olarak düşüyor; kullanıcı orada gözden
+  geçirip "Gönder" diyor
+- **Her ETTN bir kez kabul ediliyor.** Taslak portaldan silinse bile aynı
+  UUID tekrar yüklenemez ("aynı UUID'ye sahip ve taslak durumunda olmayan bir
+  fatura zaten sistemde mevcut"). Yeniden denemek gerekirse yeni UUID üret.
+- Fatura numarası bizde: `SERI + YIL + 9 hane` (`MGL2026000000001`).
+  Hepsiburada'nın kendi `INT` serisiyle çakışmasın diye ayrı seri.
+  Son sıra `ayarlar.json > fatura_sira`'da tutuluyor.
+- Üretim anında `depo.kaydet(durum='taslak')` çağrılıyor: yükleme başarılı
+  olup etiketleme unutulursa iz kalmazsa aynı siparişe ikinci fatura üretilir.
+
+## GİB protokolü — zor kazanılmış bilgiler (ARTIK KULLANILMIYOR)
 
 Bunlar GİB test ortamında **canlı denenerek** bulundu. Dokümante değil.
 
