@@ -283,6 +283,70 @@ def ubl_fatura(
     )
 
 
+def saticiyi_oku(xml_metni: str) -> tuple[Satici, str]:
+    """Portaldan indirilmiş bir faturadan satıcı bilgilerini çıkarır.
+
+    Kullanıcının bu bilgileri elle yazmasına gerek kalmasın diye: e-Faturam'da
+    kestiği herhangi bir faturayı XML olarak indirip veriyor, ad/adres/vergi
+    dairesi oradan okunuyor. Fatura numarasının serisi de (ör. 'INT') döner,
+    böylece çakışmayan bir seri seçilebilir.
+    """
+    import re as _re
+    from xml.etree import ElementTree as _ET
+
+    # İmza bloğu ve XSLT eki devasa olabiliyor; ayrıştırmadan önce atıyoruz.
+    govde = _re.sub(r"<ext:UBLExtensions>.*?</ext:UBLExtensions>", "", xml_metni, flags=_re.S)
+    govde = _re.sub(
+        r"<cac:AdditionalDocumentReference>.*?</cac:AdditionalDocumentReference>",
+        "", govde, flags=_re.S,
+    )
+    try:
+        kok = _ET.fromstring(govde)
+    except _ET.ParseError as hata:
+        raise ValueError(f"XML okunamadı: {hata}")
+
+    ad_sadelestir = lambda etiket: _re.sub(r"\{[^}]+\}", "", etiket)  # noqa: E731
+
+    def bul(kapsayici, *yol: str) -> str:
+        el = kapsayici
+        for parca in yol:
+            el = next((c for c in el if ad_sadelestir(c.tag) == parca), None)
+            if el is None:
+                return ""
+        return (el.text or "").strip()
+
+    taraf = next(
+        (c for c in kok if ad_sadelestir(c.tag) == "AccountingSupplierParty"), None
+    )
+    if taraf is None:
+        raise ValueError("Faturada satıcı bilgisi bulunamadı.")
+    taraf = next((c for c in taraf if ad_sadelestir(c.tag) == "Party"), taraf)
+
+    satici = Satici(
+        tckn=bul(taraf, "PartyIdentification", "ID"),
+        ad=bul(taraf, "Person", "FirstName"),
+        soyad=bul(taraf, "Person", "FamilyName"),
+        unvan=bul(taraf, "PartyName", "Name"),
+        vergi_dairesi=bul(taraf, "PartyTaxScheme", "TaxScheme", "Name"),
+        mahalle=bul(taraf, "PostalAddress", "StreetName"),
+        bina_no=bul(taraf, "PostalAddress", "BuildingNumber"),
+        kapi_no=bul(taraf, "PostalAddress", "Room"),
+        ilce=bul(taraf, "PostalAddress", "CitySubdivisionName"),
+        il=bul(taraf, "PostalAddress", "CityName"),
+        posta_kodu=bul(taraf, "PostalAddress", "PostalZone"),
+        telefon=bul(taraf, "Contact", "Telephone"),
+        eposta=bul(taraf, "Contact", "ElectronicMail"),
+        website=bul(taraf, "WebsiteURI"),
+    )
+
+    # Belge numarasının harf öneki = seri (INT2026000000361 -> INT)
+    belge_no = next(
+        ((c.text or "").strip() for c in kok if ad_sadelestir(c.tag) == "ID"), ""
+    )
+    seri = "".join(ch for ch in belge_no[:3] if ch.isalpha())
+    return satici, seri
+
+
 def dosya_adi(satici_tckn: str, belge_no: str, ettn: str) -> str:
     """Portalın kendi indirdiği dosyalardaki adlandırma düzeni."""
     return f"{satici_tckn}-{belge_no}-{ettn}.xml"

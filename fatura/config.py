@@ -24,7 +24,7 @@ from dotenv import dotenv_values
 
 KOK = Path(__file__).resolve().parent.parent
 
-SURUM = "1.1.0"
+SURUM = "1.1.1"
 UYGULAMA_ADI = "Magicland Fatura"
 GITHUB_DEPO = "Icepun/shopify-earsiv-fatura"
 

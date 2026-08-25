@@ -74,7 +74,10 @@
   }
   .ustserit { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 20px; }
   .surum { font-size: 11px; color: var(--soluk); border: 1px solid var(--cizgi);
-           padding: 2px 7px; border-radius: 999px; }
+           padding: 3px 9px; border-radius: 999px; cursor: pointer; white-space: nowrap; }
+  .surum:hover { border-color: var(--vurgu); color: var(--vurgu); }
+  .surum.guncel { color: var(--iyi); border-color: var(--iyi); }
+  .surum.eski { color: var(--vurgu); border-color: var(--vurgu); font-weight: 600; }
   .tarih-alan { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--soluk); }
   .tarih-alan input { width: 148px; }
   .cip {
@@ -173,7 +176,7 @@
       <h1>Magicland Fatura</h1>
       <div class="altbaslik" id="altbaslik">Yükleniyor…</div>
     </div>
-    <span class="surum" id="surum-rozet"></span>
+    <span class="surum" id="surum-rozet" title="Tıkla: güncelleme denetle"></span>
     <button id="ayarlar-ac">Ayarlar</button>
   </div>
 
@@ -311,6 +314,12 @@
 
     <div class="bolum">
       <h3>Fatura bilgileriniz</h3>
+      <div class="alan" style="padding:12px;border:1px dashed var(--cizgi);border-radius:8px">
+        <label>Örnek faturadan doldur</label>
+        <input type="file" id="a-ornek" accept=".xml">
+        <div class="yardim">e-Faturam'da kestiğiniz herhangi bir faturayı XML olarak indirip seçin — aşağıdaki alanlar kendiliğinden dolar.</div>
+        <div id="a-ornek-sonuc"></div>
+      </div>
       <div class="ikili">
         <div class="alan"><label>TCKN / VKN</label><input type="text" id="a-s-tckn"></div>
         <div class="alan"><label>Vergi dairesi</label><input type="text" id="a-s-vd"></div>
@@ -689,7 +698,8 @@ const AYAR_ALANLARI = {
 async function ayarlariYukle({ ilk = false } = {}) {
   try {
     const a = await cagir("/api/ayarlar");
-    $("#surum-rozet").textContent = "s" + a.surum;
+    yerelSurum = a.surum;
+    surumRozeti("sade");
     $("#altbaslik").textContent = a.magaza
       ? `${a.magaza} · KDV %${a.kdv_orani} · Hepsiburada e-Faturam için XML üretir`
       : "Başlamak için Ayarlar'ı doldurun.";
@@ -743,6 +753,27 @@ $("#a-kaydet").addEventListener("click", async () => {
   dugme.disabled = false; dugme.textContent = "Kaydet";
 });
 
+$("#a-ornek").addEventListener("change", async (olay) => {
+  const dosya = olay.target.files[0];
+  const kutu = $("#a-ornek-sonuc");
+  if (!dosya) return;
+  kutu.innerHTML = '<div class="mesaj">Okunuyor…</div>';
+  try {
+    const metin = await dosya.text();
+    const veri = await cagir("/api/ornekten-doldur", {
+      method: "POST", body: JSON.stringify({ xml: metin }),
+    });
+    await ayarlariYukle();
+    let not = "Bilgiler dolduruldu.";
+    if (veri.ornek_seri && veri.ornek_seri === $("#a-seri").value)
+      not += ` Dikkat: seri "${veri.ornek_seri}" portalda zaten kullanılıyor, farklı bir seri seçin.`;
+    kutu.innerHTML = `<div class="mesaj m-iyi">${kacis(not)}</div>`;
+  } catch (h) {
+    kutu.innerHTML = `<div class="mesaj m-hata">${kacis(h.message)}</div>`;
+  }
+  olay.target.value = "";
+});
+
 $("#a-sina").addEventListener("click", async () => {
   const dugme = $("#a-sina"), kutu = $("#a-sinav");
   dugme.disabled = true; dugme.textContent = "Sınanıyor…";
@@ -760,18 +791,37 @@ $("#a-sina").addEventListener("click", async () => {
 // ─── güncelleme ──────────────────────────────────────────────────
 
 let guncellemeUrl = "";
+let yerelSurum = "";
+
+/** Sürüm rozeti: güncel mi, yeni sürüm mü var — bakınca anlaşılsın. */
+function surumRozeti(hal, ek = "") {
+  const el = $("#surum-rozet");
+  el.classList.remove("guncel", "eski");
+  if (hal === "kontrol") el.textContent = `${yerelSurum} · denetleniyor…`;
+  else if (hal === "guncel") { el.textContent = `${yerelSurum} · güncel`; el.classList.add("guncel"); }
+  else if (hal === "eski") { el.textContent = `${yerelSurum} · ${ek} çıktı`; el.classList.add("eski"); }
+  else el.textContent = yerelSurum;
+}
 
 async function guncellemeKontrol() {
+  surumRozeti("kontrol");
   try {
     const g = await cagir("/api/guncelleme");
-    if (!g.var || !g.kurulabilir) return;
+    if (!g.var) { surumRozeti("guncel"); return; }
+    surumRozeti("eski", g.surum);
+    if (!g.kurulabilir) return;   // kaynaktan çalışıyor: kurulamaz
     guncellemeUrl = g.indirme_url;
     $("#guncelleme-baslik").textContent = `Yeni sürüm hazır: ${g.surum}`;
     $("#guncelleme-aciklama").textContent =
       (g.notlar || "").split("\n")[0] || "Güncellemek birkaç saniye sürer.";
     $("#guncelleme-serit").classList.add("acik");
-  } catch { /* sürüm sunucusuna ulaşılamazsa sessiz geç */ }
+  } catch {
+    // Sürüm sunucusuna ulaşılamadı; sürümü sade göster, sessiz geç.
+    surumRozeti("sade");
+  }
 }
+
+$("#surum-rozet").addEventListener("click", guncellemeKontrol);
 
 $("#guncelleme-sonra").addEventListener("click", () =>
   $("#guncelleme-serit").classList.remove("acik"));

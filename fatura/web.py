@@ -163,6 +163,37 @@ def baglanti_testi() -> dict:
     return sonuc
 
 
+class OrnekIstegi(BaseModel):
+    xml: str
+
+
+@uygulama.post("/api/ornekten-doldur")
+def ornekten_doldur(istek: OrnekIstegi) -> dict:
+    """Portaldan indirilmiş bir faturadan satıcı bilgilerini doldurur.
+
+    Kullanıcının TCKN, vergi dairesi, adres gibi alanları elle yazmasına gerek
+    kalmıyor; e-Faturam'da kestiği herhangi bir faturayı veriyor.
+    """
+    try:
+        satici, seri = ubl.saticiyi_oku(istek.xml)
+    except ValueError as hata:
+        raise HTTPException(400, str(hata))
+    if not satici.tckn:
+        raise HTTPException(400, "Faturada satıcı TCKN/VKN'si bulunamadı.")
+
+    yeni = {
+        "satici_tckn": satici.tckn, "satici_ad": satici.ad,
+        "satici_soyad": satici.soyad, "satici_unvan": satici.unvan,
+        "satici_vergi_dairesi": satici.vergi_dairesi,
+        "satici_mahalle": satici.mahalle, "satici_bina_no": satici.bina_no,
+        "satici_kapi_no": satici.kapi_no, "satici_ilce": satici.ilce,
+        "satici_il": satici.il, "satici_posta_kodu": satici.posta_kodu,
+        "satici_telefon": satici.telefon, "satici_eposta": satici.eposta,
+    }
+    config.kaydet(yeni)
+    return {"tamam": True, "ayarlar": yeni, "ornek_seri": seri}
+
+
 @uygulama.get("/api/siparisler")
 def siparisler(
     tetikleyici: str = "fulfilled",
