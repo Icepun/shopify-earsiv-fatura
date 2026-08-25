@@ -267,6 +267,24 @@ class Shopify:
 
         return siparisler
 
+    def siparis_ara(self, numara: str) -> dict | None:
+        """Sipariş numarasıyla tek sipariş getirir ('#1077' ya da '1077').
+
+        Durum/etiket filtresi uygulanmaz; elle verilen numarayı olduğu gibi
+        bulur. Shopify 'name:1077' aramasında benzer numaraları da
+        döndürebildiği için sonuç birebir doğrulanıyor.
+        """
+        numara = numara.strip().lstrip("#")
+        if not numara:
+            return None
+        veri = self._cagir(
+            SIPARIS_SORGUSU, {"sorgu": f"name:{numara}", "adet": 10, "imlec": None}
+        )
+        for siparis in veri.get("orders", {}).get("nodes", []):
+            if (siparis.get("name") or "").lstrip("#") == numara:
+                return siparis
+        return None
+
     def faturalandi_isaretle(self, siparis_id: str, ettn: str = "") -> None:
         """Siparişe 'faturalandi' etiketini ve ETTN metafield'ını yazar."""
         sonuc = self._cagir(

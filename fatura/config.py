@@ -45,6 +45,24 @@ ALANLAR: dict[str, tuple[str, object]] = {
     "kargoyu_dagit":           ("KARGOYU_DAGIT", True),
     "fatura_notu":             ("FATURA_NOTU", ""),
     "baslangic_tarihi":        ("BASLANGIC_TARIHI", ""),
+    # ── Hepsiburada e-Faturam XML üretimi ──
+    # Fatura numarası seri + yıl + 9 hane: MGL2026000000001
+    "fatura_seri":             ("FATURA_SERI", "MGL"),
+    "fatura_sira":             ("FATURA_SIRA", 0),
+    # Faturayı kesen (mükellef) bilgileri — örnek faturadan alındı
+    "satici_tckn":             ("SATICI_TCKN", ""),
+    "satici_ad":               ("SATICI_AD", ""),
+    "satici_soyad":            ("SATICI_SOYAD", ""),
+    "satici_unvan":            ("SATICI_UNVAN", ""),
+    "satici_vergi_dairesi":    ("SATICI_VERGI_DAIRESI", ""),
+    "satici_mahalle":          ("SATICI_MAHALLE", ""),
+    "satici_bina_no":          ("SATICI_BINA_NO", ""),
+    "satici_kapi_no":          ("SATICI_KAPI_NO", ""),
+    "satici_ilce":             ("SATICI_ILCE", ""),
+    "satici_il":               ("SATICI_IL", ""),
+    "satici_posta_kodu":       ("SATICI_POSTA_KODU", ""),
+    "satici_telefon":          ("SATICI_TELEFON", ""),
+    "satici_eposta":           ("SATICI_EPOSTA", ""),
 }
 
 # Ayarlar ekranına değeri gönderilmeyen, yalnızca yazılabilen alanlar.
