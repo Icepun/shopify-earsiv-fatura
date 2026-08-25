@@ -24,7 +24,7 @@ from dotenv import dotenv_values
 
 KOK = Path(__file__).resolve().parent.parent
 
-SURUM = "1.1.1"
+SURUM = "1.1.2"
 UYGULAMA_ADI = "Magicland Fatura"
 GITHUB_DEPO = "Icepun/shopify-earsiv-fatura"
 
@@ -232,16 +232,24 @@ def _globalleri_tazele() -> None:
 
 
 def eksik_ayarlar() -> list[str]:
-    """Araç çalışmadan önce doldurulması gereken ayarlar."""
+    """Araç çalışmadan önce doldurulması gereken ayarlar.
+
+    GİB alanları burada aranmıyor: fatura artık Hepsiburada e-Faturam'a XML
+    olarak yükleniyor, GİB'e bağlanmıyoruz. Bunlar hâlâ istenseydi temiz bir
+    kurulumda ekranda olmayan alanlar için uyarı çıkardı.
+    """
     eksik = []
     if not SHOPIFY_STORE:
         eksik.append("Shopify mağaza adresi")
     if not SHOPIFY_TOKEN and not (SHOPIFY_ISTEMCI_KIMLIGI and SHOPIFY_GIZLI_ANAHTAR):
         eksik.append("Shopify istemci kimliği ve gizli anahtarı")
-    if not GIB_KULLANICI_KODU:
-        eksik.append("GİB kullanıcı kodu")
-    if not GIB_SIFRE:
-        eksik.append("GİB şifresi")
+    a = _ayarlar
+    if not a.get("satici_tckn"):
+        eksik.append("TCKN / VKN")
+    if not a.get("satici_vergi_dairesi"):
+        eksik.append("vergi dairesi")
+    if not (a.get("satici_ad") or a.get("satici_unvan")):
+        eksik.append("ad soyad ya da ünvan")
     return eksik
 
 
