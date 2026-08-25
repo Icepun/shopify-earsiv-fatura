@@ -24,7 +24,7 @@ from dotenv import dotenv_values
 
 KOK = Path(__file__).resolve().parent.parent
 
-SURUM = "1.1.3"
+SURUM = "1.1.4"
 UYGULAMA_ADI = "Magicland Fatura"
 GITHUB_DEPO = "Icepun/shopify-earsiv-fatura"
 
@@ -67,6 +67,20 @@ ALANLAR: dict[str, tuple[str, object]] = {
 
 # Ayarlar ekranına değeri gönderilmeyen, yalnızca yazılabilen alanlar.
 GIZLI_ALANLAR = {"shopify_gizli_anahtar", "shopify_token", "gib_sifre"}
+
+# Boş gelirse ESKİ DEĞERİ KORUNAN alanlar.
+#
+# Bunlar kimlik bilgileri: boşaltmanın hiçbir geçerli sebebi yok, ama boş bir
+# formun kaydedilmesi (ekran dolmadan Kaydet'e basmak, yarım yüklenen sayfa,
+# eski bir sekme) hepsini birden siliyordu. Boş değer artık "değiştirme"
+# demek; gerçekten silmek isteyen ayar dosyasını elle düzenler.
+KORUNAN_ALANLAR = {
+    "shopify_magaza", "shopify_istemci_kimligi",
+    "satici_tckn", "satici_ad", "satici_soyad", "satici_vergi_dairesi",
+    "satici_mahalle", "satici_bina_no", "satici_kapi_no",
+    "satici_ilce", "satici_il", "satici_posta_kodu",
+    "satici_telefon", "satici_eposta", "fatura_seri",
+} | GIZLI_ALANLAR
 
 _ayarlar: dict = {}
 
@@ -159,11 +173,25 @@ def yeniden_yukle() -> dict:
     global _ayarlar
 
     yol = ayar_dosyasi()
-    if yol.exists():
+    yedek = yol.with_name("ayarlar.yedek.json")
+
+    kayitli = None
+    for aday in (yol, yedek):
+        if not aday.exists():
+            continue
         try:
-            kayitli = json.loads(yol.read_text(encoding="utf-8"))
+            okunan = json.loads(aday.read_text(encoding="utf-8"))
         except (ValueError, OSError):
-            kayitli = {}
+            continue
+        # Boş/anlamsız bir dosya yüzünden her şeyi sıfırlamıyoruz; yedeğe
+        # düşüyoruz. (Ayarların "kendiliğinden gitmesi" böyle görünüyordu.)
+        if isinstance(okunan, dict) and okunan.get("shopify_magaza"):
+            kayitli = okunan
+            break
+        if kayitli is None and isinstance(okunan, dict):
+            kayitli = okunan
+
+    if kayitli is not None:
         temel = {ad: varsayilan for ad, (_, varsayilan) in ALANLAR.items()}
         temel.update({ad: d for ad, d in kayitli.items() if ad in ALANLAR})
         _ayarlar = temel
@@ -182,9 +210,8 @@ def kaydet(yeni: dict) -> dict:
         if ad not in yeni:
             continue
         deger = yeni[ad]
-        if ad in GIZLI_ALANLAR and (deger is None or str(deger).strip() == ""):
-            # Ekranda maskeli duran alanı kullanıcı boş bıraktıysa eskisini
-            # silmiyoruz; yalnızca yenisini yazdıysa değiştiriyoruz.
+        if ad in KORUNAN_ALANLAR and (deger is None or str(deger).strip() == ""):
+            # Boş gelen kimlik alanı "değiştirme" demek (bkz. KORUNAN_ALANLAR).
             continue
         if isinstance(varsayilan, bool):
             guncel[ad] = _metni_bool(deger, varsayilan)
@@ -201,9 +228,18 @@ def kaydet(yeni: dict) -> dict:
     # Önce geçici dosyaya yazıp yerine koyuyoruz: yazma sırasında uygulama
     # kapanırsa yarım kalmış bir ayar dosyası kalmasın (o dosya okunamayınca
     # bütün ayarlar sıfırlanmış görünüyor).
+    metin = json.dumps(guncel, ensure_ascii=False, indent=2)
     gecici = yol.with_suffix(".json.yeni")
-    gecici.write_text(json.dumps(guncel, ensure_ascii=False, indent=2), encoding="utf-8")
+    gecici.write_text(metin, encoding="utf-8")
     os.replace(gecici, yol)
+
+    # Dolu bir ayar takımını ayrıca yedekliyoruz; asıl dosya bir şekilde
+    # bozulur ya da boşalırsa açılışta buradan geri alınıyor.
+    if guncel.get("shopify_magaza"):
+        try:
+            yol.with_name("ayarlar.yedek.json").write_text(metin, encoding="utf-8")
+        except OSError:
+            pass
 
     globals()["_ayarlar"] = guncel
     _globalleri_tazele()

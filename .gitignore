@@ -4,6 +4,8 @@ __pycache__/
 *.pyc
 *.db
 ayarlar.json
+ayarlar.yedek.json
+ayarlar.json.yeni
 faturalar/
 build/
 dist/
