@@ -367,8 +367,8 @@
 
     <div class="sinav" id="a-sinav"></div>
     <div class="pencere-alt">
-      <button class="birincil" id="a-kaydet">Kaydet</button>
-      <button id="a-sina">Shopify Bağlantısını Sına</button>
+      <button class="birincil" id="a-kaydet" disabled>Kaydet</button>
+      <button id="a-sina" disabled>Shopify Bağlantısını Sına</button>
       <span style="flex:1"></span>
       <button id="a-kapat">Kapat</button>
     </div>
@@ -695,6 +695,13 @@ const AYAR_ALANLARI = {
   "#a-s-eposta": "satici_eposta", "#a-seri": "fatura_seri",
 };
 
+let ayarlarYuklendi = false;
+
+function ayarDugmeleri(acik) {
+  $("#a-kaydet").disabled = !acik;
+  $("#a-sina").disabled = !acik;
+}
+
 async function ayarlariYukle({ ilk = false } = {}) {
   try {
     const a = await cagir("/api/ayarlar");
@@ -711,6 +718,11 @@ async function ayarlariYukle({ ilk = false } = {}) {
     $("#a-kargo").checked = !!a.kargoyu_dagit;
     $("#a-gizli-kayitli").innerHTML = (a.dolu_gizliler || {}).shopify_gizli_anahtar
       ? '<span class="kayitli">· kayıtlı</span>' : "";
+
+    // Form gerçekten dolduktan sonra kaydetmeye izin veriyoruz: boş bir
+    // formu kaydetmek bütün ayarları siliyordu.
+    ayarlarYuklendi = true;
+    ayarDugmeleri(true);
 
     if (a.baslangic_tarihi) $("#baslangic").value = a.baslangic_tarihi;
     if (a.eksik_ayarlar.length) {
@@ -741,6 +753,7 @@ document.addEventListener("keydown", (o) => {
 });
 
 $("#a-kaydet").addEventListener("click", async () => {
+  if (!ayarlarYuklendi) return mesaj("Ayarlar henüz yüklenmedi, bir saniye bekleyin.", "uyari");
   const dugme = $("#a-kaydet");
   dugme.disabled = true; dugme.textContent = "Kaydediliyor…";
   try {

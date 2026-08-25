@@ -24,7 +24,7 @@ from dotenv import dotenv_values
 
 KOK = Path(__file__).resolve().parent.parent
 
-SURUM = "1.1.2"
+SURUM = "1.1.3"
 UYGULAMA_ADI = "Magicland Fatura"
 GITHUB_DEPO = "Icepun/shopify-earsiv-fatura"
 
@@ -198,7 +198,12 @@ def kaydet(yeni: dict) -> dict:
 
     yol = ayar_dosyasi()
     yol.parent.mkdir(parents=True, exist_ok=True)
-    yol.write_text(json.dumps(guncel, ensure_ascii=False, indent=2), encoding="utf-8")
+    # Önce geçici dosyaya yazıp yerine koyuyoruz: yazma sırasında uygulama
+    # kapanırsa yarım kalmış bir ayar dosyası kalmasın (o dosya okunamayınca
+    # bütün ayarlar sıfırlanmış görünüyor).
+    gecici = yol.with_suffix(".json.yeni")
+    gecici.write_text(json.dumps(guncel, ensure_ascii=False, indent=2), encoding="utf-8")
+    os.replace(gecici, yol)
 
     globals()["_ayarlar"] = guncel
     _globalleri_tazele()
