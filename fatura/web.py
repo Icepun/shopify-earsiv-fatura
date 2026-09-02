@@ -440,6 +440,33 @@ def bekleyenler() -> dict:
     }
 
 
+@uygulama.post("/api/faturayi-geri-al")
+def faturayi_geri_al(istek: IsaretIstegi) -> dict:
+    """Yanlış kesilen faturaları geri alır: kayıt silinir, etiket kaldırılır.
+
+    Sipariş yeniden "faturalanmamış" olur ve yeni belge numarası + yeni ETTN
+    ile tekrar üretilebilir. Portaldaki eski faturayı silmek kullanıcının
+    işi — bu uç yalnızca bizim tarafı temizler.
+    """
+    try:
+        shopify = Shopify()
+    except ShopifyHatasi as hata:
+        raise HTTPException(400, str(hata))
+
+    geri_alinan, hatalar = 0, []
+    for siparis_id in istek.siparis_idler:
+        fatura = _durum["faturalar"].get(siparis_id)
+        no = fatura.siparis_no if fatura else siparis_id
+        try:
+            shopify.faturalandi_etiketini_kaldir(siparis_id)
+            depo.sil(siparis_id)
+            geri_alinan += 1
+        except ShopifyHatasi as hata:
+            hatalar.append(f"{no}: {hata}")
+
+    return {"geri_alinan": geri_alinan, "hatalar": hatalar}
+
+
 @uygulama.post("/api/gizle")
 def gizle(istek: IsaretIstegi) -> dict:
     """Seçilen siparişleri listeden kalıcı olarak çıkarır (deneme siparişleri).

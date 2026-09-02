@@ -115,6 +115,16 @@ def islenmis_idler() -> set[str]:
     return {satir["siparis_id"] for satir in satirlar}
 
 
+def sil(siparis_id: str) -> None:
+    """Fatura kaydını siler — yanlış kesilen bir fatura geri alınırken.
+
+    Sipariş yeniden "faturalanmamış" duruma döner ve yeni bir belge
+    numarası + yeni ETTN ile yeniden üretilebilir.
+    """
+    with baglanti() as baglan:
+        baglan.execute("DELETE FROM faturalar WHERE siparis_id = ?", (siparis_id,))
+
+
 def gizle(siparis_id: str, siparis_no: str = "") -> None:
     with baglanti() as baglan:
         baglan.execute(

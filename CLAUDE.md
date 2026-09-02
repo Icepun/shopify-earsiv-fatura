@@ -313,6 +313,20 @@ istedi; bundan sonrakiler siparişin kendi tarihiyle gidiyor. Bu yüzden
 da öyle. Siparişin gerçek tarihini faturaya ayrıca yazmıyoruz; hangi siparişe
 ait olduğu `OrderReference/ID`'deki sipariş numarasından belli.
 
+## Yanlış kesilen faturayı geri alma
+
+`/api/faturayi-geri-al`: yerel kaydı siler ve Shopify'daki `faturalandi`
+etiketini kaldırır (`tagsRemove`). Sipariş yeniden "bekliyor" olur ve **yeni
+belge numarası + yeni ETTN** ile tekrar üretilir — portal aynı UUID'yi ikinci
+kez kabul etmiyor.
+
+Panelde faturalanmış satırlar seçilebilir ama "Gözden Geçir" onlar için
+kapalı; yalnızca "Faturayı Geri Al" çalışır.
+
+**Portaldaki taslağı silmek kullanıcının işi** — bu uç yalnızca bizim tarafı
+temizler. Taslak değil de gönderilmiş bir fatura söz konusuysa yeniden kesmek
+çift fatura demektir; o bir mevzuat sorusudur, mali müşavire sorulmalı.
+
 ## Sipariş gizleme
 
 Deneme siparişleri listeyi kirletmesin diye kalıcı gizleme var:

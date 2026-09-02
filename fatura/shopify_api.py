@@ -52,6 +52,14 @@ mutation EtiketEkle($id: ID!, $etiketler: [String!]!) {
 }
 """
 
+ETIKET_KALDIR = """
+mutation EtiketKaldir($id: ID!, $etiketler: [String!]!) {
+  tagsRemove(id: $id, tags: $etiketler) {
+    userErrors { field message }
+  }
+}
+"""
+
 METAFIELD_YAZ = """
 mutation MetafieldYaz($girdiler: [MetafieldsSetInput!]!) {
   metafieldsSet(metafields: $girdiler) {
@@ -269,6 +277,15 @@ class Shopify:
             imlec = sayfa.get("endCursor")
 
         return siparisler
+
+    def faturalandi_etiketini_kaldir(self, siparis_id: str) -> None:
+        """Yanlış kesilen bir fatura geri alınırken etiketi de kaldırır."""
+        sonuc = self._cagir(
+            ETIKET_KALDIR, {"id": siparis_id, "etiketler": [config.ETIKET]}
+        )
+        hatalar = sonuc.get("tagsRemove", {}).get("userErrors", [])
+        if hatalar:
+            raise ShopifyHatasi(f"Etiket kaldırılamadı: {hatalar}")
 
     def siparis_ara(self, numara: str) -> dict | None:
         """Sipariş numarasıyla tek sipariş getirir ('#1077' ya da '1077').

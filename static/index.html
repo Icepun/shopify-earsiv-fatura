@@ -230,6 +230,7 @@
         <span style="flex:1"></span>
         <span id="secim-ozet" class="kalem"></span>
         <button id="gizle" disabled>Seçilenleri Gizle</button>
+        <button id="geri-al" style="display:none">Faturayı Geri Al</button>
         <button id="gizleme-kaldir" style="display:none">Gizlemeyi Kaldır</button>
         <button class="birincil" id="gozden-gecir" disabled>Seçilenleri Gözden Geçir</button>
       </div>
@@ -449,7 +450,7 @@ function sayiAkit(el, bas, son, bicim, sure = 420) {
 const DURUMLAR = {
   bekliyor:     ['<span class="rozet r-bos">faturalanmadı</span>', true],
   xml_uretildi: ['<span class="rozet r-uyari">XML üretildi</span>', true],
-  faturalandi:  ['<span class="rozet r-iyi">faturalandı</span>', false],
+  faturalandi:  ['<span class="rozet r-iyi">faturalandı</span>', true],
   gizli:        ['<span class="rozet r-bos">gizli</span>', true],
 };
 
@@ -497,9 +498,13 @@ function secimOzeti() {
   if (!secilenler.length) el.textContent = "Hiç sipariş seçilmedi";
   else sayiAkit(el, sonToplam, toplam, (v) => `${secilenler.length} sipariş · ${v.toFixed(2)} ₺`);
   sonToplam = toplam;
+  const faturalanmis = secilenler.filter((f) => f.durum === "faturalandi");
   $("#gozden-gecir").disabled = secilenler.length === 0
-    || secilenler.some((f) => f.durum === "gizli");
+    || secilenler.some((f) => f.durum === "gizli" || f.durum === "faturalandi");
   $("#gizle").disabled = secilenler.length === 0;
+  $("#geri-al").style.display = faturalanmis.length ? "" : "none";
+  $("#geri-al").textContent = faturalanmis.length === 1
+    ? "Faturayı Geri Al" : `${faturalanmis.length} Faturayı Geri Al`;
 }
 
 document.addEventListener("click", (olay) => {
@@ -687,6 +692,34 @@ $("#gizle").addEventListener("click", async () => {
     secili.clear();
     $("#getir").click();
   } catch (h) { mesaj(h.message, "hata"); }
+});
+
+$("#geri-al").addEventListener("click", async () => {
+  const secilenler = faturalar.filter(
+    (f) => secili.has(f.siparis_id) && f.durum === "faturalandi");
+  if (!secilenler.length) return;
+  const numaralar = secilenler.map((f) => f.belge_no || f.siparis_no).join(", ");
+  if (!confirm(
+    `${secilenler.length} siparişin faturası geri alınacak:
+${numaralar}
+
+` +
+    "Bu işlem yalnızca uygulamadaki kaydı temizler. Portaldaki taslakları " +
+    "önce oradan silmen gerekiyor. Devam?")) return;
+  const dugme = $("#geri-al");
+  dugme.disabled = true; dugme.textContent = "Geri alınıyor…";
+  try {
+    const veri = await cagir("/api/faturayi-geri-al", {
+      method: "POST",
+      body: JSON.stringify({ siparis_idler: secilenler.map((f) => f.siparis_id) }),
+    });
+    mesaj(`${veri.geri_alinan} siparişin faturası geri alındı, yeniden kesilebilir.`,
+          veri.hatalar.length ? "uyari" : "iyi");
+    veri.hatalar.forEach((h) => mesaj(h, "hata"));
+    secili.clear();
+    $("#getir").click();
+  } catch (h) { mesaj(h.message, "hata"); }
+  dugme.disabled = false;
 });
 
 $("#gizleme-kaldir").addEventListener("click", async () => {
