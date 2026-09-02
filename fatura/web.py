@@ -83,6 +83,10 @@ def _duzeltmeleri_uygula(fatura: Fatura, duzeltmeler: dict) -> None:
 class TaslakIstegi(BaseModel):
     siparis_idler: list[str]
     duzeltmeler: dict[str, dict] = {}
+    # Fatura tarihi siparişin kendi tarihi yerine bugün olsun mu?
+    # Mali müşavir, birikmiş geçmiş siparişlerin bugünün tarihiyle
+    # kesilmesini istedi; bundan sonrakiler sipariş tarihiyle gidiyor.
+    bugun_tarihli: bool = False
 
 
 class IsaretIstegi(BaseModel):
@@ -329,7 +333,12 @@ def xml_uret(istek: TaslakIstegi) -> dict:
         sira += 1
         belge_no = f"{seri}{yil}{sira:09d}"
         ettn = str(uuid.uuid4())
-        xml = ubl.ubl_fatura(fatura, satici, belge_no=belge_no, ettn=ettn)
+        simdi = datetime.now()
+        xml = ubl.ubl_fatura(
+            fatura, satici, belge_no=belge_no, ettn=ettn,
+            belge_tarihi=simdi.strftime("%Y-%m-%d") if istek.bugun_tarihli else "",
+            belge_saati=simdi.strftime("%H:%M:%S") if istek.bugun_tarihli else "",
+        )
         ad = ubl.dosya_adi(satici.tckn, belge_no, ettn)
         (klasor / ad).write_text(xml, encoding="utf-8")
 
@@ -344,6 +353,9 @@ def xml_uret(istek: TaslakIstegi) -> dict:
             "siparis_id": siparis_id, "siparis_no": fatura.siparis_no,
             "belge_no": belge_no, "ettn": ettn, "dosya": ad,
             "toplam": f"{fatura.toplam:.2f}",
+            "fatura_tarihi": (simdi.strftime("%d/%m/%Y")
+                              if istek.bugun_tarihli else fatura.tarih),
+            "siparis_tarihi": fatura.tarih,
         })
 
     if not uretilen:

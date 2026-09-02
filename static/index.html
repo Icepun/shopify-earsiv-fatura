@@ -262,6 +262,16 @@
         <button id="onizleme-geri">← Listeye dön</button>
         <button class="birincil" id="xml-olustur">XML Oluştur</button>
       </div>
+      <div class="satir" style="margin-top:12px;padding-top:12px;border-top:1px solid var(--cizgi)">
+        <span style="font-size:13px;color:var(--soluk)">Fatura tarihi</span>
+        <label class="kutucuk" style="font-size:14px">
+          <input type="radio" name="faturaTarihi" value="siparis" checked> Siparişin kendi tarihi
+        </label>
+        <label class="kutucuk" style="font-size:14px">
+          <input type="radio" name="faturaTarihi" value="bugun"> Bugün
+        </label>
+        <span id="tarih-ipucu" class="kalem"></span>
+      </div>
       <div class="ipucu">Eksik alanlar sarı işaretli. Düzeltmelerin yalnızca faturaya yazılır, Shopify'daki sipariş değişmez.</div>
       <div class="surec" id="surec-xml"><i></i></div>
     </div>
@@ -286,7 +296,7 @@
     <div class="kart">
       <table>
         <thead>
-          <tr><th>Sipariş</th><th>Fatura No</th><th class="sag">Tutar</th><th>Dosya</th></tr>
+          <tr><th>Sipariş</th><th>Fatura No</th><th>Fatura tarihi</th><th class="sag">Tutar</th><th>Dosya</th></tr>
         </thead>
         <tbody id="sonuc-govde"></tbody>
       </table>
@@ -599,7 +609,8 @@ function onizlemeCiz() {
     kutu.innerHTML = `
       <div class="onizleme-baslik">
         <strong>${kacis(f.siparis_no)}</strong>
-        <span class="kalem">${f.tarih}</span>
+        <span class="kalem">sipariş ${f.tarih}</span>
+        <span class="rozet r-bos fatura-tarihi"></span>
         ${eksik.size ? `<span class="rozet r-uyari">eksik: ${[...eksik].join(", ")}</span>` : ""}
         ${sapma !== 0 ? `<span class="rozet r-hata">sapma ${f.sapma} ₺</span>` : ""}
         <span style="flex:1"></span>
@@ -615,7 +626,32 @@ function onizlemeCiz() {
   });
 
   $("#onizleme-ozet").textContent = `${onizlenen.length} fatura · ${toplam.toFixed(2)} ₺`;
+  tarihRozetleri();
 }
+
+function bugunMetni() {
+  const t = new Date();
+  return `${String(t.getDate()).padStart(2, "0")}/${String(t.getMonth() + 1).padStart(2, "0")}/${t.getFullYear()}`;
+}
+
+/** Her faturanın hangi tarihle kesileceğini rozette gösterir. */
+function tarihRozetleri() {
+  const bugun = document.querySelector('input[name="faturaTarihi"]:checked').value === "bugun";
+  const bugunStr = bugunMetni();
+  document.querySelectorAll(".onizleme-kart").forEach((kart, sira) => {
+    const rozet = kart.querySelector(".fatura-tarihi");
+    if (!rozet) return;
+    const f = onizlenen[sira];
+    rozet.textContent = "fatura " + (bugun ? bugunStr : f.tarih);
+  });
+  const eskiler = onizlenen.filter((f) => f.tarih !== bugunStr).length;
+  $("#tarih-ipucu").textContent = bugun
+    ? `Hepsi ${bugunStr} tarihiyle kesilecek.`
+    : (eskiler ? `${eskiler} fatura geçmiş tarihli kesilecek.` : "");
+}
+
+document.querySelectorAll('input[name="faturaTarihi"]').forEach((r) =>
+  r.addEventListener("change", tarihRozetleri));
 
 document.addEventListener("input", (olay) => {
   const { id, alan } = olay.target.dataset || {};
@@ -676,14 +712,18 @@ $("#xml-olustur").addEventListener("click", async () => {
     const veri = await cagir("/api/xml-uret", {
       method: "POST",
       body: JSON.stringify({
-        siparis_idler: onizlenen.map((f) => f.siparis_id), duzeltmeler,
+        siparis_idler: onizlenen.map((f) => f.siparis_id),
+        duzeltmeler,
+        bugun_tarihli: document.querySelector('input[name="faturaTarihi"]:checked').value === "bugun",
       }),
     });
     sonSonuc = veri;
     $("#sonuc-baslik").textContent = `${veri.adet} fatura hazır — ${veri.zip}`;
     $("#sonuc-govde").innerHTML = veri.faturalar.map((f) => `
       <tr><td><strong>${kacis(f.siparis_no)}</strong></td>
-      <td>${kacis(f.belge_no)}</td><td class="sag">${f.toplam} ₺</td>
+      <td>${kacis(f.belge_no)}</td>
+      <td>${kacis(f.fatura_tarihi || "")}</td>
+      <td class="sag">${f.toplam} ₺</td>
       <td class="kalem">${kacis(f.dosya)}</td></tr>`).join("");
     gorunum("sonuc");
     mesaj(`${veri.adet} XML oluşturuldu.`, "iyi");

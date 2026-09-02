@@ -149,16 +149,27 @@ def ubl_fatura(
     belge_no: str,
     ettn: str | None = None,
     siparis_tarihi: str = "",
+    belge_tarihi: str = "",
+    belge_saati: str = "",
 ) -> str:
     """Tek bir faturanın UBL-TR XML'ini üretir.
 
     belge_no: 'MGL2026000000001' gibi — seri + yıl + 9 hane sıra.
     ettn: verilmezse üretilir. Dosya adında da kullanılır.
+    belge_tarihi: YYYY-AA-GG. Verilmezse siparişin kendi tarihi kullanılır.
+        Birikmiş geçmiş siparişleri bugünün tarihiyle kesmek için veriliyor.
+
+    Faturadaki iki tarih (fatura tarihi ve sipariş tarihi) **aynı olur**:
+    kullanıcının kestiği mevcut faturalarda da öyle ve mali müşaviri böyle
+    istedi. Sipariş numarası faturada durduğu için hangi siparişe ait olduğu
+    yine belli.
     """
     ettn = ettn or str(uuid.uuid4())
     alici = fatura.alici
     gun, ay, yil = fatura.tarih.split("/")
-    tarih_iso = f"{yil}-{ay}-{gun}"
+    siparis_iso = f"{yil}-{ay}-{gun}"
+    tarih_iso = belge_tarihi or siparis_iso
+    siparis_tarihi = siparis_tarihi or tarih_iso
 
     bas = (
         '<?xml version="1.0" encoding="UTF-8"?>'
@@ -178,7 +189,7 @@ def ubl_fatura(
         + _e(CBC, "CopyIndicator", "false")
         + _e(CBC, "UUID", ettn)
         + _e(CBC, "IssueDate", tarih_iso)
-        + _e(CBC, "IssueTime", fatura.saat or "00:00:00")
+        + _e(CBC, "IssueTime", belge_saati or fatura.saat or "00:00:00")
         + _e(CBC, "InvoiceTypeCode", "SATIS")
         + _e(CBC, "Note", tutar_yaziyla(fatura.toplam))
         + _e(CBC, "DocumentCurrencyCode", "TRY")
@@ -190,7 +201,7 @@ def ubl_fatura(
         siparis = (
             f"<{CAC}:OrderReference>"
             + _e(CBC, "ID", fatura.siparis_no.lstrip("#"))
-            + _e(CBC, "IssueDate", siparis_tarihi or tarih_iso)
+            + _e(CBC, "IssueDate", siparis_tarihi)
             + f"</{CAC}:OrderReference>"
         )
 

@@ -300,6 +300,19 @@ Kalıcı veri zaten sunucu tarafında.
 .exe **imzalı değil** — Windows SmartScreen ilk açılışta "bilinmeyen
 yayımcı" diyecek. Kod imzalama sertifikası alınmadıkça bu sürecek.
 
+## Fatura tarihi — parti bazında seçiliyor
+
+Mali müşavir, **birikmiş geçmiş siparişlerin bugünün tarihiyle** kesilmesini
+istedi; bundan sonrakiler siparişin kendi tarihiyle gidiyor. Bu yüzden
+önizleme ekranında "Fatura tarihi: Siparişin kendi tarihi / Bugün" seçimi var
+(`TaslakIstegi.bugun_tarihli`, `ubl_fatura(belge_tarihi=..., belge_saati=...)`,
+`xml_uret.py --bugun`).
+
+**Faturadaki iki tarih daima aynı olur** — `IssueDate` ve
+`OrderReference/IssueDate`. Kullanıcının portalda kestiği mevcut faturalarda
+da öyle. Siparişin gerçek tarihini faturaya ayrıca yazmıyoruz; hangi siparişe
+ait olduğu `OrderReference/ID`'deki sipariş numarasından belli.
+
 ## Sipariş gizleme
 
 Deneme siparişleri listeyi kirletmesin diye kalıcı gizleme var:

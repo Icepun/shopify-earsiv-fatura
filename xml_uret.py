@@ -2,6 +2,7 @@
 """Shopify siparişlerinden Hepsiburada e-Faturam için toplu XML üretir.
 
     python xml_uret.py 1077 1075 1073          # sipariş numaralarıyla
+    python xml_uret.py --bugun 1077 1075       # fatura tarihi = bugün
     python xml_uret.py --tarih 2026-08-01 2026-08-26
     python xml_uret.py --etiketle 1077 1075    # ONAYDAN SONRA işaretle
 
@@ -76,7 +77,8 @@ def _siparisleri_getir(numaralar: list[str], baslangic: str, bitis: str) -> list
     )
 
 
-def uret(numaralar: list[str], baslangic: str = "", bitis: str = "") -> int:
+def uret(numaralar: list[str], baslangic: str = "", bitis: str = "",
+         bugun_tarihli: bool = False) -> int:
     eksik_ayar = [a for a in ("satici_tckn", "satici_ad", "satici_vergi_dairesi")
                   if not config.ayarlar().get(a)]
     if eksik_ayar:
@@ -113,7 +115,12 @@ def uret(numaralar: list[str], baslangic: str = "", bitis: str = "") -> int:
         sira += 1
         belge_no = f"{seri}{yil}{sira:09d}"
         ettn = str(uuid.uuid4())
-        xml = ubl_fatura(fatura, satici, belge_no=belge_no, ettn=ettn)
+        simdi = datetime.now()
+        xml = ubl_fatura(
+            fatura, satici, belge_no=belge_no, ettn=ettn,
+            belge_tarihi=simdi.strftime("%Y-%m-%d") if bugun_tarihli else "",
+            belge_saati=simdi.strftime("%H:%M:%S") if bugun_tarihli else "",
+        )
         ad = dosya_adi(satici.tckn, belge_no, ettn)
         (klasor / ad).write_text(xml, encoding="utf-8")
 
@@ -157,6 +164,7 @@ def uret(numaralar: list[str], baslangic: str = "", bitis: str = "") -> int:
     satirlar = [
         f"Üretim: {datetime.now():%d.%m.%Y %H:%M}",
         f"Seri   : {seri}{yil} — {uretilen[0][1]} ... {uretilen[-1][1]}",
+        f"Tarih  : {'bugün (' + datetime.now().strftime('%d.%m.%Y') + ')' if bugun_tarihli else 'siparişin kendi tarihi'}",
         "",
         f"{'Sipariş':10}{'Belge No':20}{'Matrah':>10}{'KDV':>9}{'Toplam':>10}  Alıcı",
     ]
@@ -232,12 +240,14 @@ def main(argv: list[str]) -> int:
         return 1
     if argv[0] == "--etiketle":
         return etiketle(argv[1:])
-    if argv[0] == "--tarih":
+    bugun_tarihli = "--bugun" in argv
+    argv = [a for a in argv if a != "--bugun"]
+    if argv and argv[0] == "--tarih":
         if len(argv) < 3:
             print(f"{KOTU} Kullanım: --tarih 2026-08-01 2026-08-26")
             return 1
-        return uret([], argv[1], argv[2])
-    return uret(argv)
+        return uret([], argv[1], argv[2], bugun_tarihli)
+    return uret(argv, bugun_tarihli=bugun_tarihli)
 
 
 if __name__ == "__main__":
