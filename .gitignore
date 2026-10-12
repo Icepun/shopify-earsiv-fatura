@@ -12,3 +12,8 @@ dist/
 *.spec
 .DS_Store
 faturalar/
+
+# Calisma sirasinda olusan dosyalar
+*.log
+*.log.*
+yedek/

@@ -8,7 +8,11 @@ from datetime import datetime, timedelta, timezone
 import httpx
 
 from . import config
+from .gunluk import kayit
 
+# Customer.email / Customer.phone ve MailingAddress.countryCode kullanımdan
+# kalkıyor (yanıt başlığı: x-shopify-api-deprecated-reason). Kaldırıldıkları
+# gün sorgunun tamamı hata verir; yerlerine geçen alanlar kullanılıyor.
 SIPARIS_ALANLARI = """
   id
   name
@@ -20,12 +24,17 @@ SIPARIS_ALANLARI = """
   tags
   currentTotalPriceSet { shopMoney { amount } }
   shippingLines(first: 5) { nodes { discountedPriceSet { shopMoney { amount } } } }
-  billingAddress { firstName lastName address1 address2 city province countryCode zip phone company }
-  shippingAddress { firstName lastName address1 address2 city province countryCode zip phone company }
-  customer { email phone displayName }
+  billingAddress { firstName lastName address1 address2 city province zip phone company }
+  shippingAddress { firstName lastName address1 address2 city province zip phone company }
+  customer {
+    displayName
+    defaultEmailAddress { emailAddress }
+    defaultPhoneNumber { phoneNumber }
+  }
   lineItems(first: 100) {
     nodes {
       title
+      name
       quantity
       currentQuantity
       originalTotalSet { shopMoney { amount } }
@@ -43,6 +52,16 @@ query Siparisler($sorgu: String!, $adet: Int!, $imlec: String) {{
   }}
 }}
 """
+
+SECILI_SIPARISLER = f"""
+query Secililer($idler: [ID!]!) {{
+  nodes(ids: $idler) {{ ... on Order {{ {SIPARIS_ALANLARI} }} }}
+}}
+"""
+
+# Faturalanabilir ödeme durumları. Kısmi iadeliler de listelenir: kalan
+# miktar üzerinden faturalanırlar (bkz. donustur._kalemleri_cikar).
+ODENMIS = ("PAID", "PARTIALLY_REFUNDED")
 
 ETIKET_EKLE = """
 mutation EtiketEkle($id: ID!, $etiketler: [String!]!) {
@@ -134,7 +153,10 @@ class _TokenDeposu:
                 timeout=30,
             )
         except httpx.HTTPError as hata:
-            raise ShopifyHatasi(f"Shopify token sunucusuna ulaşılamadı: {hata}")
+            kayit.warning("shopify token baglanti hatasi: %r", hata)
+            raise ShopifyHatasi(
+                "Shopify'a ulaşılamadı. İnternet bağlantınızı kontrol edin."
+            )
 
         try:
             veri = cevap.json()
@@ -218,14 +240,24 @@ class Shopify:
         )
 
     def _cagir(self, sorgu: str, degiskenler: dict, tekrar: bool = True) -> dict:
-        with httpx.Client(timeout=30) as istemci:
-            cevap = istemci.post(
-                self.url,
-                headers={
-                    "X-Shopify-Access-Token": self.token,
-                    "Content-Type": "application/json",
-                },
-                json={"query": sorgu, "variables": degiskenler},
+        # Ağ hataları burada yakalanmazsa panele "HTTP 500" diye yansıyordu.
+        try:
+            with httpx.Client(timeout=30) as istemci:
+                cevap = istemci.post(
+                    self.url,
+                    headers={
+                        "X-Shopify-Access-Token": self.token,
+                        "Content-Type": "application/json",
+                    },
+                    json={"query": sorgu, "variables": degiskenler},
+                )
+        except httpx.TimeoutException as hata:
+            kayit.warning("shopify zaman asimi: %r", hata)
+            raise ShopifyHatasi("Shopify yanıt vermedi. Biraz sonra yeniden deneyin.")
+        except httpx.HTTPError as hata:
+            kayit.warning("shopify baglanti hatasi: %r", hata)
+            raise ShopifyHatasi(
+                "Shopify'a ulaşılamadı. İnternet bağlantınızı kontrol edin."
             )
         if cevap.status_code == 401 and not self._sabit_token and tekrar:
             # Token 24 saatte doluyor; uzun açık kalan panelde süresi geçmiş
@@ -233,10 +265,16 @@ class Shopify:
             _token_deposu.temizle()
             return self._cagir(sorgu, degiskenler, tekrar=False)
         if cevap.status_code != 200:
+            kayit.warning("shopify http %s: %s", cevap.status_code, cevap.text[:500])
             raise ShopifyHatasi(f"Shopify HTTP {cevap.status_code}: {cevap.text[:300]}")
 
-        veri = cevap.json()
+        try:
+            veri = cevap.json()
+        except ValueError:
+            kayit.warning("shopify yaniti okunamadi: %s", cevap.text[:500])
+            raise ShopifyHatasi("Shopify'dan beklenmeyen bir yanıt geldi. Yeniden deneyin.")
         if veri.get("errors"):
+            kayit.warning("shopify graphql hatasi: %s", veri["errors"])
             raise ShopifyHatasi(f"Shopify GraphQL hatası: {veri['errors']}")
         return veri.get("data", {})
 
@@ -256,7 +294,9 @@ class Shopify:
         küçük partiler halinde faturalayabilmek için.
         """
         durum = "fulfillment_status:shipped" if tetikleyici == "fulfilled" else ""
-        parcalar = ["financial_status:paid"]
+        # Yalnızca "paid" arandığında kısmi iadeli siparişler listeye hiç
+        # düşmüyor, faturasız kalıyordu.
+        parcalar = ["(financial_status:paid OR financial_status:partially_refunded)"]
         if yalnizca_faturasiz:
             parcalar.append(f"-tag:{config.ETIKET}")
         if durum:
@@ -291,6 +331,21 @@ class Shopify:
             imlec = sayfa.get("endCursor")
 
         return siparisler
+
+    def siparisleri_getir(self, idler: list[str]) -> dict[str, dict]:
+        """Verilen siparişleri kimlikleriyle yeniden çeker (id -> sipariş).
+
+        Fatura üretmeden hemen önce çağrılır: liste sabah çekilip öğleden
+        sonra üretim yapılırsa arada iptal ya da iade olan sipariş eski
+        haliyle faturalanmasın. Bulunamayan kimlik sonuçta yer almaz.
+        """
+        bulunan: dict[str, dict] = {}
+        for bas in range(0, len(idler), 50):
+            veri = self._cagir(SECILI_SIPARISLER, {"idler": idler[bas:bas + 50]})
+            for siparis in veri.get("nodes") or []:
+                if siparis and siparis.get("id"):
+                    bulunan[siparis["id"]] = siparis
+        return bulunan
 
     def faturalandi_etiketini_kaldir(self, siparis_id: str) -> None:
         """Yanlış kesilen bir fatura geri alınırken etiketi de kaldırır."""

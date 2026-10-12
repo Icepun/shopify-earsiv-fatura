@@ -64,7 +64,24 @@
   .r-bos { background: var(--zemin); color: var(--soluk); border: 1px solid var(--cizgi); }
   .kalem { color: var(--soluk); font-size: 13px; }
   .ipucu { font-size: 12px; color: var(--soluk); margin-top: 10px; }
-  .mesaj { padding: 11px 14px; border-radius: 8px; margin-bottom: 12px; font-size: 14px; }
+  .mesaj {
+    display: flex; align-items: flex-start; gap: 10px;
+    padding: 11px 14px; border-radius: 8px; margin-bottom: 12px; font-size: 14px;
+    transition: opacity .2s ease, transform .2s ease;
+  }
+  .mesaj > span { flex: 1; }
+  .mesaj.kapaniyor { opacity: 0; transform: translateY(-4px); }
+  .mesaj-kapat {
+    padding: 0 7px; border: 0; background: transparent; color: inherit;
+    font-size: 18px; line-height: 1.15; font-weight: 400; opacity: .6; border-radius: 6px;
+  }
+  .mesaj-kapat:hover:not(:disabled) {
+    opacity: 1; background: color-mix(in srgb, currentColor 14%, transparent);
+  }
+  .uyari-satir {
+    font-size: 13px; color: var(--uyari); background: var(--uyari-zemin);
+    padding: 6px 10px; border-radius: 7px; margin-bottom: 10px;
+  }
   .m-iyi { background: var(--iyi-zemin); color: var(--iyi); }
   .m-hata { background: var(--hata-zemin); color: var(--hata); }
   .m-uyari { background: var(--uyari-zemin); color: var(--uyari); }
@@ -441,12 +458,31 @@ const azHareket = () => window.matchMedia("(prefers-reduced-motion: reduce)").ma
 const kacis = (m) => String(m ?? "").replace(/[&<>"]/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
+function mesajiKapat(kutu) {
+  if (!kutu.isConnected || kutu.classList.contains("kapaniyor")) return;
+  kutu.classList.add("kapaniyor");
+  setTimeout(() => kutu.remove(), azHareket() ? 0 : 220);
+}
+
 function mesaj(metin, tur = "iyi") {
   const kutu = document.createElement("div");
   kutu.className = "mesaj m-" + tur;
-  kutu.textContent = metin;
+  const yazi = document.createElement("span");
+  yazi.textContent = metin;
+  const kapat = document.createElement("button");
+  kapat.type = "button";
+  kapat.className = "mesaj-kapat";
+  kapat.setAttribute("aria-label", "Kapat");
+  kapat.textContent = "×";
+  kapat.addEventListener("click", () => mesajiKapat(kutu));
+  kutu.append(yazi, kapat);
   $("#mesajlar").prepend(kutu);
-  if (tur === "iyi") setTimeout(() => kutu.remove(), 9000);
+  if (tur === "iyi") setTimeout(() => mesajiKapat(kutu), 9000);
+}
+
+/** Yeni bir işlem başlarken öncekinin hata ve uyarılarını kaldırır; yoksa üst üste birikiyorlar. */
+function mesajlariTemizle() {
+  document.querySelectorAll("#mesajlar .m-hata, #mesajlar .m-uyari").forEach(mesajiKapat);
 }
 
 function surec(id, acik) { $(id)?.classList.toggle("acik", acik); }
@@ -527,7 +563,12 @@ const DURUMLAR = {
 // Kendiliğinden yalnızca faturalanmamışlar seçilir. Hepsi seçilirken XML'i
 // üretilmiş siparişler fark edilmeden yeniden üretiliyor, faturalanmışlar da
 // tek tıkla geri alınabilir halde bekliyordu.
-const kendiligindenSecilir = (f) => f.durum === "bekliyor";
+// Fatura tutarı tahsilatla tutmuyorsa (ör. tutar üzerinden kısmi iade) o
+// sipariş de kendiliğinden seçilmez; önce bakılsın. Kuruşluk yuvarlama
+// farkları bu sınırın altında kalır.
+const SAPMA_SINIRI = 0.05;
+const tutarTutmuyor = (f) => Math.abs(parseFloat(f.sapma)) > SAPMA_SINIRI;
+const kendiligindenSecilir = (f) => f.durum === "bekliyor" && !tutarTutmuyor(f);
 
 function ciz() {
   const govde = $("#govde");
@@ -539,19 +580,21 @@ function ciz() {
     const rozet = DURUMLAR[f.durum] || DURUMLAR.bekliyor;
     const tr = document.createElement("tr");
     tr.style.animationDelay = Math.min(sira * 18, 400) + "ms";
-    if (!kendiligindenSecilir(f)) tr.dataset.soluk = "1";
+    // Faturalanmamışlar öne çıksın; işi bitmiş satırlar soluk durur.
+    if (f.durum !== "bekliyor") tr.dataset.soluk = "1";
     tr.className = secili.has(f.siparis_id) ? "secili" : (tr.dataset.soluk ? "kapali" : "");
 
     const kalemler = f.kalemler
       .map((k) => `${k.miktar}× ${kacis(k.ad)} <span class="sag">${k.dahil} ₺</span>`).join("<br>");
     const sapma = parseFloat(f.sapma);
-    const rozetler = (sapma !== 0 ? `<span class="rozet r-hata">sapma ${f.sapma} ₺</span>` : "")
+    const rozetler = (tutarTutmuyor(f) ? `<span class="rozet r-hata">tutar tutmuyor: ${f.sapma} ₺</span>`
+        : sapma !== 0 ? `<span class="rozet r-hata">sapma ${f.sapma} ₺</span>` : "")
       + (f.belge_no ? `<span class="rozet r-bos">${kacis(f.belge_no)}</span>` : "");
 
     tr.innerHTML = `
       <td><input type="checkbox" data-sec="${f.siparis_id}" ${secili.has(f.siparis_id) ? "checked" : ""}></td>
       <td><strong>${kacis(f.siparis_no)}</strong><br><span class="kalem">${f.tarih}</span></td>
-      <td>${rozet}</td>
+      <td>${rozet}${f.kismi_iade ? '<span class="rozet r-uyari">kısmi iade</span>' : ""}</td>
       <td>${kacis(f.alici.unvan || (f.alici.ad + " " + f.alici.soyad))}<br>
           <span class="kalem">${kacis([f.alici.ilce, f.alici.sehir].filter(Boolean).join(" / "))}</span></td>
       <td class="kalem">${kalemler}${rozetler ? "<br>" + rozetler : ""}</td>
@@ -658,6 +701,7 @@ async function bekleyenIslemi(dugme, calisirken, yol, sayacAlani, bitince) {
   const idler = bekleyenler.filter((b) => bekleyenSecili.has(b.siparis_id)).map((b) => b.siparis_id);
   if (!idler.length) return;
   const etiket = dugme.textContent;
+  mesajlariTemizle();
   const cubuk = ilerlemeCubugu("#bekleyen-cubuk", "#bekleyen-ilerleme");
   $("#bekleyen-isaretle").disabled = $("#bekleyen-vazgec").disabled = true;
   dugme.textContent = calisirken;
@@ -709,8 +753,11 @@ document.querySelectorAll(".cip").forEach((c) =>
 ["#baslangic", "#bitis"].forEach((se) => $(se).addEventListener("change", () =>
   document.querySelectorAll(".cip").forEach((c) => c.classList.remove("etkin"))));
 
-$("#getir").addEventListener("click", async () => {
+$("#getir").addEventListener("click", async (olay) => {
   const dugme = $("#getir");
+  // Başka bir işlemin sonunda kendiliğinden tetiklendiyse o işlemin
+  // mesajları yerinde kalmalı; yalnızca kullanıcı bastıysa temizlenir.
+  if (olay.isTrusted) mesajlariTemizle();
   dugme.disabled = true; dugme.textContent = "Getiriliyor…";
   surec("#surec-getir", true);
   try {
@@ -777,16 +824,23 @@ function onizlemeCiz() {
       <td class="sag">${k.kdv}</td><td class="sag">${k.dahil} ₺</td></tr>`).join("");
 
     const sapma = parseFloat(f.sapma);
+    // Eksik alan ve sapma zaten rozetle gösteriliyor; kurumsal uyarısı da
+    // VKN ile vergi dairesi girildiyse artık geçerli değil.
+    const uyarilar = (f.uyarilar || []).filter((u) =>
+      !u.startsWith("Yuvarlama") && !u.includes("elle doldurulmalı")
+      && !(u.startsWith("Kurumsal") && f.alici.vergi_dairesi && f.alici.vkn_tckn !== "11111111111"));
     kutu.innerHTML = `
       <div class="onizleme-baslik">
         <strong>${kacis(f.siparis_no)}</strong>
         <span class="kalem">sipariş ${f.tarih}</span>
         <span class="rozet r-bos fatura-tarihi"></span>
         ${eksik.size ? `<span class="rozet r-uyari">eksik: ${[...eksik].join(", ")}</span>` : ""}
-        ${sapma !== 0 ? `<span class="rozet r-hata">sapma ${f.sapma} ₺</span>` : ""}
+        ${tutarTutmuyor(f) ? `<span class="rozet r-hata">tutar tutmuyor: ${f.sapma} ₺</span>`
+          : sapma !== 0 ? `<span class="rozet r-hata">sapma ${f.sapma} ₺</span>` : ""}
         <span style="flex:1"></span>
         <strong>${f.toplam} ₺</strong>
       </div>
+      ${uyarilar.map((u) => `<div class="uyari-satir">${kacis(u)}</div>`).join("")}
       <div class="alanlar">${alanlar}</div>
       <table class="kalem-tablo">
         <thead><tr><th>Kalem</th><th class="sag">Adet</th><th class="sag">Birim</th>
@@ -840,7 +894,9 @@ $("#gozden-gecir").addEventListener("click", async () => {
     "Yeniden üretirsen yeni numara alırlar, eskileri geçersiz olur. " +
     "Eskisini portala yüklediysen önce oradan sil. Devam?")) return;
   const dugme = $("#gozden-gecir");
-  dugme.disabled = true;
+  mesajlariTemizle();
+  dugme.disabled = true; dugme.textContent = "Hazırlanıyor…";
+  surec("#surec-getir", true);
   try {
     const veri = await cagir("/api/onizleme", {
       method: "POST", body: JSON.stringify({ siparis_idler: idler, duzeltmeler }),
@@ -849,7 +905,9 @@ $("#gozden-gecir").addEventListener("click", async () => {
     onizlemeCiz();
     gorunum("onizleme");
   } catch (h) { mesaj(h.message, "hata"); }
-  dugme.disabled = false;
+  surec("#surec-getir", false);
+  dugme.textContent = "Seçilenleri Gözden Geçir";
+  secimOzeti();
 });
 
 $("#gizle").addEventListener("click", async () => {
@@ -879,6 +937,7 @@ ${numaralar}
     "Bu işlem yalnızca uygulamadaki kaydı temizler. Portaldaki taslakları " +
     "önce oradan silmen gerekiyor. Devam?")) return;
   const dugme = $("#geri-al");
+  mesajlariTemizle();
   dugme.disabled = true; dugme.textContent = "Geri alınıyor…";
   try {
     const veri = await cagir("/api/faturayi-geri-al", {
@@ -911,6 +970,7 @@ $("#onizleme-geri").addEventListener("click", () => gorunum("liste"));
 
 $("#xml-olustur").addEventListener("click", async () => {
   const dugme = $("#xml-olustur");
+  mesajlariTemizle();
   dugme.disabled = true; dugme.textContent = "Oluşturuluyor…";
   surec("#surec-xml", true);
   try {
@@ -919,6 +979,7 @@ $("#xml-olustur").addEventListener("click", async () => {
       body: JSON.stringify({
         siparis_idler: onizlenen.map((f) => f.siparis_id),
         duzeltmeler,
+        beklenen_toplamlar: Object.fromEntries(onizlenen.map((f) => [f.siparis_id, f.toplam])),
         bugun_tarihli: document.querySelector('input[name="faturaTarihi"]:checked').value === "bugun",
       }),
     });
@@ -953,6 +1014,7 @@ $("#isaretle").addEventListener("click", async () => {
   if (!sonSonuc) return;
   if (!confirm(`${sonSonuc.adet} sipariş "faturalandı" olarak işaretlenecek. Portala yükleyip onayladın mı?`)) return;
   const dugme = $("#isaretle");
+  mesajlariTemizle();
   const idler = sonSonuc.faturalar.map((f) => f.siparis_id);
   const cubuk = ilerlemeCubugu("#isaretle-cubuk", "#isaretle-ilerleme");
   dugme.disabled = true; dugme.textContent = "İşaretleniyor…";

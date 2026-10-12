@@ -25,11 +25,14 @@ from dotenv import dotenv_values
 
 KOK = Path(__file__).resolve().parent.parent
 
-SURUM = "1.5.0"
+SURUM = "1.6.0"
 UYGULAMA_ADI = "Magicland Fatura"
 GITHUB_DEPO = "Icepun/shopify-earsiv-fatura"
 
-SHOPIFY_API_SURUMU = "2025-07"
+# Shopify emekli sürüme gelen isteği sessizce en eski desteklenen sürümle
+# yanıtlıyor (2025-07 istenirken 2025-10 dönüyordu); davranış haber vermeden
+# değişmesin diye sürüm güncel tutulmalı. Yanıt başlığı: x-shopify-api-version.
+SHOPIFY_API_SURUMU = "2026-10"
 ETIKET = "faturalandi"
 NIHAI_TUKETICI_TCKN = "11111111111"
 
@@ -145,6 +148,12 @@ def kaynak_klasoru() -> Path:
 
 def ayar_dosyasi() -> Path:
     return veri_klasoru() / "ayarlar.json"
+
+
+def veritabani_dosyalari() -> tuple[Path, Path]:
+    """(asıl, eski adlı) veritabanı dosyaları — bkz. _globalleri_tazele."""
+    klasor = veri_klasoru()
+    return klasor / "fatura.db", klasor / "fatura-test.db"
 
 
 def _metni_bool(ham, varsayilan: bool) -> bool:
@@ -346,11 +355,12 @@ def _globalleri_tazele() -> None:
     g["KARGOYU_DAGIT"] = bool(a.get("kargoyu_dagit", True))
     g["FATURA_NOTU"] = a.get("fatura_notu", "")
     g["BASLANGIC_TARIHI"] = a.get("baslangic_tarihi", "")
-    # Test kayıtları ayrı dosyada; test denemeleri gerçek siparişleri
-    # "faturalandı" saymasın diye.
-    g["VERITABANI"] = veri_klasoru() / (
-        "fatura-test.db" if g["GIB_TEST_MODU"] else "fatura.db"
-    )
+    # Kayıtlar `fatura.db`'de. Eskiden test modu açıkken `fatura-test.db`'ye
+    # yazılıyordu; test modunun arayüzde düğmesi kalmayınca gerçek kayıtlar
+    # o dosyada birikti. `depo.eski_veritabanini_tasi()` onu `fatura.db`
+    # adına taşıyor; taşınana kadar eski dosya kullanılmaya devam eder.
+    asil, eski = veritabani_dosyalari()
+    g["VERITABANI"] = eski if (g["GIB_TEST_MODU"] and eski.exists()) else asil
     g["FATURA_KLASORU"] = veri_klasoru() / "faturalar"
 
 

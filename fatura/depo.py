@@ -12,12 +12,15 @@ dönülebilir bir iz bırakır.
 
 from __future__ import annotations
 
+import os
+import shutil
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Callable
 
 from . import config
+from .gunluk import kayit
 
 SEMA = """
 CREATE TABLE IF NOT EXISTS faturalar (
@@ -103,6 +106,40 @@ def baglanti():
         baglan.commit()
     finally:
         baglan.close()
+
+
+def eski_veritabanini_tasi() -> None:
+    """`fatura-test.db`'yi `fatura.db` adına taşır (tek seferlik).
+
+    Gerçek kayıtlar eskiden adı "test" olan dosyada birikiyordu (bkz.
+    config._globalleri_tazele); "test dosyası" diye silinirse bütün belge
+    geçmişi ve sayaç giderdi.
+
+    Taşımadan önce ikisi de `yedek/` klasörüne alınır: taşınan dosyanın bir
+    kopyası ve varsa eski `fatura.db` (içindekiler yeni dosyaya karışmaz).
+    Bir adım başarısız olursa eski dosya yerinde kalır, uygulama onunla
+    çalışmaya devam eder ve sonraki açılışta yeniden denenir.
+    """
+    asil, eski = config.veritabani_dosyalari()
+    if not (config.GIB_TEST_MODU and eski.exists()):
+        return
+    # Yarım kalmış bir işlemin günlüğü varsa dosya tek başına taşınamaz;
+    # SQLite onu ilk açılışta toparlar, taşıma bir sonraki açılışa kalır.
+    if any(eski.with_name(eski.name + ek).exists() for ek in ("-journal", "-wal")):
+        return
+    yedek = eski.parent / "yedek"
+    damga = datetime.now().strftime("%Y%m%d-%H%M%S")
+    try:
+        yedek.mkdir(exist_ok=True)
+        shutil.copy2(eski, yedek / f"fatura-test_{damga}.db")
+        if asil.exists():
+            os.replace(asil, yedek / f"fatura-eski_{damga}.db")
+        os.replace(eski, asil)
+    except OSError as hata:
+        kayit.error("veritabani tasinamadi, eski dosyayla devam: %r", hata)
+        return
+    kayit.info("veritabani fatura.db adina tasindi (yedek: %s)", yedek)
+    config.yeniden_yukle()
 
 
 def hazirla() -> None:
@@ -348,6 +385,21 @@ def gizlenenler() -> list[dict]:
             "SELECT * FROM gizlenenler ORDER BY olusturma DESC"
         ).fetchall()
     return [dict(satir) for satir in satirlar]
+
+
+def kayitlari_getir(siparis_idler: list[str]) -> dict[str, dict]:
+    """Verilen siparişlerin kayıtları (siparis_id -> satır); kaydı olmayan yer almaz."""
+    bulunan: dict[str, dict] = {}
+    with baglanti() as baglan:
+        for bas in range(0, len(siparis_idler), 500):
+            parca = siparis_idler[bas:bas + 500]
+            for satir in baglan.execute(
+                "SELECT * FROM faturalar WHERE siparis_id IN (%s)"
+                % ",".join("?" * len(parca)),
+                parca,
+            ):
+                bulunan[satir["siparis_id"]] = dict(satir)
+    return bulunan
 
 
 def gecmis(limit: int = 200) -> list[dict]:

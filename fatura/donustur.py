@@ -242,7 +242,9 @@ def _alici_cikar(siparis: dict) -> tuple[Alici, list[str]]:
         if not sehir:
             uyarilar.append("Şehir belirlenemedi — elle doldurulmalı.")
 
-    telefon = telefon_duzelt(adres.get("phone") or musteri.get("phone"))
+    musteri_telefonu = (musteri.get("defaultPhoneNumber") or {}).get("phoneNumber")
+    musteri_epostasi = (musteri.get("defaultEmailAddress") or {}).get("emailAddress")
+    telefon = telefon_duzelt(adres.get("phone") or musteri_telefonu)
     unvan = (adres.get("company") or "").strip()
     if unvan:
         uyarilar.append(
@@ -266,7 +268,7 @@ def _alici_cikar(siparis: dict) -> tuple[Alici, list[str]]:
         sehir=sehir,
         posta_kodu=posta,
         telefon=telefon,
-        eposta=(musteri.get("email") or siparis.get("email") or "").strip(),
+        eposta=(musteri_epostasi or siparis.get("email") or "").strip(),
     )
     return alici, uyarilar
 
@@ -292,7 +294,9 @@ def _kalemleri_cikar(siparis: dict, kdv_orani: int) -> tuple[list[Kalem], list[s
             asil = Decimal(str(satir.get("quantity", 1)))
             if asil > 0:
                 toplam = kurusa(toplam * miktar / asil)
-        ad = (satir.get("title") or "Ürün").strip()[:200]
+        # `name` varyantı da taşır ("Xbox Kol Standı - Mavi"); `title` yalnızca
+        # ürün adıdır ve renk/boy faturada görünmüyordu.
+        ad = (satir.get("name") or satir.get("title") or "Ürün").strip()[:200]
         ham.append((ad, miktar, toplam))
 
     if not ham:
@@ -308,8 +312,12 @@ def _kalemleri_cikar(siparis: dict, kdv_orani: int) -> tuple[list[Kalem], list[s
         kalan = kargo
         dagitilmis = []
         for sira, (ad, miktar, toplam) in enumerate(ham):
-            if sira == len(ham) - 1 or urun_toplami <= SIFIR:
+            if sira == len(ham) - 1:
                 pay = kalan
+            elif urun_toplami <= SIFIR:
+                # Ürünler bedelsizse oran kurulamaz; kargonun tamamı son
+                # satıra kalır. (Eskiden her satıra tamamı yazılıyordu.)
+                pay = SIFIR
             else:
                 pay = kurusa(kargo * toplam / urun_toplami)
                 kalan -= pay

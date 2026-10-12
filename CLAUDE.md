@@ -36,6 +36,7 @@ fatura/shopify_api.py  Admin GraphQL: sipariş çekme, tekil arama, etiketleme
 fatura/donustur.py     sipariş -> Fatura (KDV ayrıştırma, kargo dağıtımı, uyarılar)
 fatura/ubl.py          Fatura -> UBL-TR 1.2 e-arşiv XML'i  ← ASIL ÇIKTI
 fatura/depo.py         SQLite: durum, belge geçmişi, fatura numarası sayacı
+fatura/gunluk.py       uygulama.log: beklenmeyen hatalar ve yapılan işlemler
 fatura/tek_ornek.py    aynı anda tek kopya çalışsın (Windows kilidi)
 fatura/guncelleme.py   GitHub Releases: sürüm kontrolü, indirme, kendini değiştirme
 fatura/web.py          FastAPI panel sunucusu
@@ -165,6 +166,26 @@ karşılığında **24 saatlik** bir erişim tokeni alınır. Token yine
   olmayabiliyor.
 - `SHOPIFY_TOKEN` dolu ise takas atlanır — eski tokenler için geri uyumluluk.
 
+### API sürümü ve sorgu (12.10.2026, 1.6.0)
+
+- **`SHOPIFY_API_SURUMU` güncel tutulmalı.** Shopify emekli sürüme gelen
+  isteği hata vermeden en eski desteklenen sürümle yanıtlıyor: `2025-07`
+  istenirken `2025-10` dönüyordu. Gerçekte hangi sürümün yanıtladığı
+  `x-shopify-api-version` başlığında. Şu an `2026-10`.
+- Kullanımdan kalkan alanlar `x-shopify-api-deprecated-reason` başlığında
+  listeleniyor. `Customer.email` / `Customer.phone` yerine
+  `defaultEmailAddress { emailAddress }` / `defaultPhoneNumber
+  { phoneNumber }` kullanılıyor; `MailingAddress.countryCode` sorgudan
+  çıkarıldı (kullanılmıyordu). Kaldırılan bir alan sorgunun tamamını
+  düşürür, o yüzden başlık boş kalmalı.
+- Liste sorgusu `(financial_status:paid OR financial_status:partially_refunded)`
+  arıyor. Yalnızca `paid` arandığında kısmi iadeli siparişler hiç
+  listelenmiyor, faturasız kalıyordu.
+- Kalem adı `lineItems.name`'den geliyor (ürün + varyant: "Xbox Kol Standı
+  - Mavi"); `title` yalnızca ürün adı, renk/boy faturada görünmüyordu.
+- Sorgu maliyeti düşük: 50 siparişlik liste ~220, `nodes(ids:)` ~30 puan
+  (tek sorgu sınırı 1000).
+
 ## Para hesabı — bozma
 
 Shopify fiyatları KDV **dahil** tutar, fatura KDV hariç matrah ister. Her şey
@@ -180,6 +201,10 @@ Kargo, kullanıcının kararıyla **ayrı satır değil** — net tutarı ürün
 tutar oranında dağıtılır, artık son satıra yazılır (`KARGOYU_DAGIT=true`).
 Fatura toplamı ile tahsilat arasındaki kuruş farkı gizlenmez, `Fatura.sapma`
 olarak panele "sapma" rozetiyle taşınır.
+
+Ürünlerin tamamı bedelsizse (%100 indirim) oran kurulamaz; kargonun tamamı
+son satıra yazılır. 1.6.0'dan önce bu durumda kargo **her satıra tam**
+yazılıyordu (gerçek siparişlerde hiç yaşanmamış bir kenar durumu).
 
 ### İndirim tahsisleri — `discountedTotalSet` KULLANMA (21.08.2026'da bulundu)
 
@@ -232,8 +257,8 @@ GİB'in herkese açık test hesabı: kullanıcı kodu `33333301`, şifre `1`,
 `GIB_TEST_MODU=true`. Test ortamında **SMS imzalama çalışmaz** (kayıtlı telefon
 yok) — 1. ve 2. adım doğrulanabilir, 3. adım doğrulanamaz.
 
-Test kayıtları `fatura-test.db`'ye, gerçekler `fatura.db`'ye yazılır; test
-denemeleri gerçek siparişleri "faturalandı" saymaz.
+GİB döneminde test kayıtları `fatura-test.db`'ye, gerçekler `fatura.db`'ye
+yazılıyordu. **Bu ayrım artık yok** — bkz. "Veritabanı dosyası".
 
 **Test ortamı paylaşımlıdır.** Oraya gerçek müşteri adı/adresi/telefonu
 gitmesin diye `payload._test_kimligi()` artık `GIB_TEST_MODU=true` iken alıcı
@@ -279,17 +304,79 @@ temizlenemeyebilir — mümkün olduğunca az taslak oluştur.
   önlemek değil, birikmiş yığını küçük partilere bölmek.
 - **Shopify 60 gün penceresi:** uygulamalar varsayılan olarak yalnızca son
   60 günün siparişlerini okur. Daha eskisi gerekiyorsa `read_all_orders`
-  izni eklenmeli.
-- **İade/iptal:** kısmi iade `currentQuantity` ile orantılanıyor ama iade
-  faturası (`iadeTable`) desteklenmiyor.
-- ETTN eşleştirmesi aynı anda başka bir oturumdan fatura kesilirse kayabilir;
-  panel bu durumda uyarı veriyor ama isim bazlı doğrulama eklenebilir.
-- Panelde imzalanmış faturaların PDF'ini indirme yok (`gib.indirme_linki` hazır).
-- **`fatura-test.db` dosyasını SİLME — kurulu uygulamada gerçek kayıtlar
-  orada.** `gib_test_modu` varsayılanı True ve arayüzde artık düğmesi yok,
-  bu yüzden Hepsiburada akışının bütün kayıtları (belge geçmişi ve sayaç
-  dahil) `fatura-test.db`'ye yazılıyor; `fatura.db` eski ve boşa yakın.
-  Ad yanıltıcı; dosyayı `fatura.db`'ye taşımak yapılacaklar listesinde.
+  izni eklenmeli. (12.10.2026'da 5 ay önceki siparişler okunabiliyordu;
+  izin verilmiş görünüyor.)
+- (GİB akışı) ETTN eşleştirmesi aynı anda başka bir oturumdan fatura
+  kesilirse kayabilir; isim bazlı doğrulama eklenebilir.
+- (GİB akışı) İmzalanmış faturaların PDF'ini indirme yok
+  (`gib.indirme_linki` hazır).
+- **İade/iptal:** kısmi iadeli siparişler artık listeye düşüyor (1.6.0) ve
+  `currentQuantity` ile orantılanıyor; tutar üzerinden yapılan iadeler
+  kalemlere yansımadığı için "tutar tutmuyor" rozetiyle gelir ve
+  kendiliğinden seçilmez. **Faturalandıktan sonra** iade/iptal olan
+  siparişler hâlâ izlenmiyor; iade faturası da desteklenmiyor.
+- İl bilinmiyorsa (posta kodu yok, il yazılmamış, şehir alanına ilçe
+  yazılmış) faturada il de ilçe de aynı çıkıyor (ör. Kadıköy / Kadıköy).
+  Çözmek için ilçe→il listesi gerekir; kullanıcı gözden geçirme ekranında
+  elle düzeltebiliyor.
+- Geçmiş ekranı yok: `belgeler` tablosu her şeyi tutuyor ama arayüzde
+  gösterilmiyor (belge no / ETTN arama, aylık KDV dökümü buradan çıkar).
+- Veritabanının düzenli yedeği yok; yalnızca sayaç `ayarlar.json`'da
+  yedekli.
+
+## Veritabanı dosyası (12.10.2026, 1.6.0)
+
+Kayıtlar `fatura.db`'de. 1.5.0'a kadar dosya adı `gib_test_modu`'na
+bağlıydı; o ayarın varsayılanı True ve arayüzde düğmesi kalmadığı için
+**gerçek kayıtlar `fatura-test.db` adlı dosyada birikti** (93 fatura, belge
+geçmişi, sayaç). "Test dosyası" diye silinseydi hepsi giderdi.
+
+`depo.eski_veritabanini_tasi()` açılışta bir kez çalışır:
+
+1. `fatura-test.db`'nin kopyasını `yedek/` klasörüne alır.
+2. Varsa eski `fatura.db`'yi de `yedek/`'e taşır (içindekiler yeni dosyaya
+   karışmaz; kurulu kopyada 2 eski deneme kaydı vardı).
+3. `fatura-test.db`'yi `fatura.db` adına taşır.
+
+Bir adım başarısız olursa (dosya kilitli vb.) eski dosya yerinde kalır,
+`config.VERITABANI` onu göstermeye devam eder ve sonraki açılışta yeniden
+denenir. Yarım kalmış işlem günlüğü (`-journal`/`-wal`) varsa taşıma o
+açılışta atlanır.
+
+## Hata günlüğü (1.6.0)
+
+`uygulama.log` (veri klasöründe, 1 MB × 3 dosya). Uygulama penceresiz
+çalıştığı için beklenmeyen hatalar eskiden hiçbir yere düşmüyordu.
+
+- `web._beklenmeyen_hata`: yakalanmamış her istisna traceback'iyle günlüğe
+  yazılır, panele `{"detail": "Beklenmeyen bir sorun oluştu…"}` döner
+  (eskiden yalnızca "HTTP 500" görünüyordu).
+- Shopify hataları ayrıntısıyla günlüğe, kısa ve okunur haliyle panele
+  gider. Ağ hataları `Shopify._cagir` içinde `ShopifyHatasi`'na çevrilir;
+  çevrilmediğinde internet kesintisi de "HTTP 500" oluyordu.
+- Üretim, işaretleme ve geri alma birer satırla kaydedilir.
+- **Günlüğe müşteri adı/adresi/e-postası yazma**; sipariş ve belge numarası
+  yeter.
+
+"Bazen bir şey oldu" denirse önce buraya bak.
+
+## Sunucu sipariş verisini bellekte tutmaz (1.6.0)
+
+Eskiden `/api/siparisler` hesapladığı faturaları bellekte saklıyor,
+önizleme ve üretim oradan okuyordu. İki sorunu vardı: ayar kaydetmek belleği
+silince "Sipariş bellekte yok" hatası çıkıyordu, ve sabah çekilen listeyle
+öğleden sonra üretim yapılınca arada iptal/iade olan sipariş eski haliyle
+faturalanabiliyordu.
+
+Şimdi `web._taze_faturalar()` hem önizlemede hem üretimde seçili siparişleri
+kimlikleriyle yeniden çeker (`Shopify.siparisleri_getir`, `nodes(ids:)`,
+50'lik parçalar). İptal edilmiş, iade edilmiş, başka yerde faturalanmış ya da
+bulunamayan sipariş varsa **hiçbiri işlenmez**, hangileri olduğu söylenir.
+Panel ayrıca kullanıcının gördüğü toplamları gönderir
+(`beklenen_toplamlar`); üretim anındaki toplam tutmuyorsa üretim durur.
+
+Bellekte yalnızca `_numaralar` (id → "#1105") kalır, o da mesajlarda
+okunaklı ad göstermek için.
 
 ## Masaüstü uygulaması (21.08.2026'da eklendi)
 
@@ -328,9 +415,10 @@ ayar kaydetmek **yeniden başlatma gerektirmiyor**.
 
 - Gizli alanlar (`GIZLI_ALANLAR`) arayüze **hiç gönderilmiyor**; yalnızca
   "dolu mu" bilgisi gidiyor. Kullanıcı alanı boş bırakırsa eski değer korunur.
-- `POST /api/ayarlar` kaydettikten sonra Shopify token önbelleğini ve açık
-  GİB oturumunu bırakıyor; test modu değişmişse veritabanı başka dosyaya
-  kaydığı için `depo.hazirla()` yeniden çağrılıyor.
+- `POST /api/ayarlar` kaydettikten sonra Shopify token önbelleğini bırakıyor
+  ve `depo.hazirla()`'yı yeniden çağırıyor.
+- Fatura serisi kaydedilirken doğrulanır: tam 3 karakter, yalnızca A-Z ve
+  rakam (belge numarası 16 hane olmak zorunda).
 
 ### Güncelleme
 
@@ -475,6 +563,15 @@ arayüzden düşmüş, yalnız `/api/bekleyenler` ucu kalmıştı.
 - İşaretleme ve vazgeçme 5'erli parçalar halinde gönderilir
   (`parcaliGonder`), ilerleme çubuğu "12 / 80" diye gerçek ilerlemeyi
   gösterir.
+- Fatura tutarı tahsilattan 5 kuruştan fazla sapan sipariş de
+  kendiliğinden seçilmez ("tutar tutmuyor" rozeti; `tutarTutmuyor`).
+  Kuruşluk yuvarlama farkları bu sınırın altında kalır.
+
+Mesaj kutuları (1.6.0): hata ve uyarılar × ile kapatılır ve kullanıcı yeni
+bir işlem başlattığında temizlenir (`mesajlariTemizle`). Bir işlemin sonunda
+liste kendiliğinden yenileniyorsa o işlemin mesajları silinmez
+(`olay.isTrusted` ayrımı). Önizleme kartı `fatura.uyarilar`'ı da gösterir —
+eskiden hesaplanıyor ama hiç gösterilmiyordu.
 
 ## Windows notları
 
