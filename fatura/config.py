@@ -18,19 +18,24 @@ import io
 import json
 import os
 import sys
+from datetime import timedelta, timezone
 from pathlib import Path
 
 from dotenv import dotenv_values
 
 KOK = Path(__file__).resolve().parent.parent
 
-SURUM = "1.4.0"
+SURUM = "1.5.0"
 UYGULAMA_ADI = "Magicland Fatura"
 GITHUB_DEPO = "Icepun/shopify-earsiv-fatura"
 
 SHOPIFY_API_SURUMU = "2025-07"
 ETIKET = "faturalandi"
 NIHAI_TUKETICI_TCKN = "11111111111"
+
+# Shopify zamanları UTC verir; fatura tarihi ve tarih filtresi Türkiye
+# saatiyle olmalı. Türkiye 2016'dan beri yıl boyu UTC+3, yaz saati yok.
+TURKIYE = timezone(timedelta(hours=3))
 
 # Ayar adı -> (.env karşılığı, varsayılan)
 ALANLAR: dict[str, tuple[str, object]] = {
@@ -48,6 +53,9 @@ ALANLAR: dict[str, tuple[str, object]] = {
     # ── Hepsiburada e-Faturam XML üretimi ──
     # Fatura numarası seri + yıl + 9 hane: MGL2026000000001
     "fatura_seri":             ("FATURA_SERI", "MGL"),
+    # Asıl sayaç veritabanında (depo.sayac). Buradaki değer yalnızca yedek:
+    # her partiden sonra güncellenir, veritabanı kaybolursa sayaç buradan
+    # devam eder.
     "fatura_sira":             ("FATURA_SIRA", 0),
     # Faturayı kesen (mükellef) bilgileri — örnek faturadan alındı
     "satici_tckn":             ("SATICI_TCKN", ""),
@@ -270,6 +278,11 @@ def kaydet(yeni: dict) -> dict:
 
 def ayarlar() -> dict:
     return dict(_ayarlar)
+
+
+def fatura_serisi() -> str:
+    """Belge numarasının başındaki üç harf (MGL2026000000001 -> MGL)."""
+    return (_ayarlar.get("fatura_seri") or "MGL").strip().upper()
 
 
 def tani() -> dict:

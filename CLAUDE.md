@@ -31,12 +31,12 @@ GİB'e dönülürse diye saklanıyor, oradaki protokol bilgisi zor kazanıldı.
 masaustu.py            uygulama giriş noktası: pencere + gömülü sunucu
 derle.py               PyInstaller ile tek dosyalık .exe üretir
 yayinla.py             .exe'yi GitHub Releases'e yükler
-xml_uret.py            komut satırından toplu XML (panelin yaptığının aynısı)
 fatura/config.py       ayarlar (ayarlar.json; yoksa .env'den devralır)
 fatura/shopify_api.py  Admin GraphQL: sipariş çekme, tekil arama, etiketleme
 fatura/donustur.py     sipariş -> Fatura (KDV ayrıştırma, kargo dağıtımı, uyarılar)
 fatura/ubl.py          Fatura -> UBL-TR 1.2 e-arşiv XML'i  ← ASIL ÇIKTI
-fatura/depo.py         SQLite: durum, ETTN, belge no, hatalar
+fatura/depo.py         SQLite: durum, belge geçmişi, fatura numarası sayacı
+fatura/tek_ornek.py    aynı anda tek kopya çalışsın (Windows kilidi)
 fatura/guncelleme.py   GitHub Releases: sürüm kontrolü, indirme, kendini değiştirme
 fatura/web.py          FastAPI panel sunucusu
 static/index.html      panel: liste → önizleme → XML (vanilla JS, tek dosya)
@@ -69,9 +69,54 @@ Biçim, kullanıcının kendi hesabından indirdiği gerçek bir faturadan
   fatura zaten sistemde mevcut"). Yeniden denemek gerekirse yeni UUID üret.
 - Fatura numarası bizde: `SERI + YIL + 9 hane` (`MGL2026000000001`).
   Hepsiburada'nın kendi `INT` serisiyle çakışmasın diye ayrı seri.
-  Son sıra `ayarlar.json > fatura_sira`'da tutuluyor.
-- Üretim anında `depo.kaydet(durum='taslak')` çağrılıyor: yükleme başarılı
-  olup etiketleme unutulursa iz kalmazsa aynı siparişe ikinci fatura üretilir.
+  Sayaç veritabanında — bkz. "Fatura numarası sayacı".
+- Üretim anında `depo.belge_uret()` çağrılıyor: yükleme başarılı olup
+  etiketleme unutulursa iz kalmazsa aynı siparişe ikinci fatura üretilir.
+
+## Fatura numarası sayacı (12.10.2026, 1.5.0)
+
+Sayaç artık `ayarlar.json`'da değil veritabanında: `sayac` tablosu, anahtar
+`SERI+YIL` (`MGL2026 -> 182`). **Yıl değişince yeni anahtar açılır, sıra
+1'den başlar**; numaradaki yıl fatura tarihinin yılıdır (bugünün değil).
+
+`depo.belge_uret()` numarayı alır, XML'i yazdırır ve kaydı düşer — **tek
+SQLite işleminde** (`BEGIN IMMEDIATE`). Hata olursa geri sarılır: numara
+harcanmaz, yarım kayıt kalmaz. Parti ortasında hata çıkarsa o ana kadar
+üretilenler geçerlidir, yanıtın `hata` alanı kalanları bildirir.
+
+Eskiden üç ayrı yoldan aynı numara iki kez verilebiliyordu; hepsi kapandı:
+
+- **Ayarlar formu sırayı her kayıtta gönderiyordu.** Form açılıştaki değeri
+  tuttuğu için, fatura ürettikten sonra Kaydet ya da "Bağlantıyı Sına"
+  sayacı geri sarıyordu. Artık sıra yalnızca elle değiştirilince gider
+  (`yuklenenSira` karşılaştırması) ve form her açılışta tazelenir.
+- **Sıra parti sonunda kaydediliyordu.** Ortada hata olursa dosyalar yazılmış
+  ama sıra ilerlememiş oluyordu.
+- **Sıra bellekten okunuyordu.** İki kopya açıkken ikisi de aynı numaradan
+  devam ediyordu.
+
+Ek güvenceler: `belgeler.belge_no` birincil anahtar (aynı numara iki kez
+yazılamaz) ve sayaç ne derse desin **verilmiş en büyük numaranın altından
+devam edilmez** (`_son_sira`). Ayarlardan sırayı düşürmek bu yüzden
+reddedilir; yükseltmek serbesttir.
+
+`ayarlar.json > fatura_sira` yalnızca **yedek**: her partiden sonra
+güncellenir, `sayac` tablosu boşsa (ilk geçiş ya da silinmiş veritabanı)
+sayaç oradan devralınır.
+
+**Numaralar eskiden yeniye verilir.** Liste yeniden eskiye sıralı olduğu
+için eskiden belge numarası büyürken fatura tarihi geriye gidiyordu;
+`xml_uret` artık partiyi sipariş zamanına göre sıralıyor.
+
+### Belge geçmişi
+
+`belgeler` tablosu üretilen her XML'in kalıcı izidir (`uretildi` |
+`yuklendi` | `iptal`). Yeniden üretme ve geri alma satır silmez, `iptal`
+yapar. `faturalar` tablosu ise siparişin şu anki durumudur (sipariş başına
+tek satır).
+
+Bu olmadan önce yeniden üretim eski numarayı iz bırakmadan eziyordu:
+gerçek veritabanında `MGL2026000000165–173` böyle kayboldu.
 
 ## GİB protokolü — zor kazanılmış bilgiler (ARTIK KULLANILMIYOR)
 
@@ -161,6 +206,26 @@ bazen ilçe adı). Şehir, **posta kodunun ilk iki hanesinden** (plaka kodu)
 türetiliyor — "Milas / 48200" → Muğla ili + Milas ilçesi. Telefonlar 10 haneye
 normalize ediliyor.
 
+**İl adı karşılaştırmaları `donustur.duz()` ile yapılır, `casefold()` ile
+değil.** Shopify bazı illeri Türkçe harfsiz gönderiyor (`Istanbul`, `Izmir`);
+`casefold()` İ/ı ayrımını koruduğu için bunlar il olarak tanınmıyor, ilçe
+sanılıp faturaya ilçe diye yazılıyordu (166 siparişin 25'inde).
+
+**İlçe boş olabilir** — portal adresi yazıldığı gibi kabul ediyor (kullanıcı
+teyidi, 12.10.2026). Siparişlerin %58'inde müşteri ilçeyi ayrı yazmıyor; bu
+yüzden önizlemede ilçe "eksik" sayılmıyor. İlçe doğrulaması ekleme.
+
+## Saat dilimi (12.10.2026)
+
+Shopify `createdAt` değerini **UTC** verir. `donustur.yerel_zaman()` onu
+Türkiye saatine (`config.TURKIYE`, sabit UTC+3) çevirir; fatura tarihi ve
+saati buradan çıkar. Çevrilmeden kullanıldığında gece 00:00–03:00 arası
+verilen siparişlerin faturası bir gün önceye düşüyordu (170 siparişin 9'u;
+#1148 ay sınırını aşıp Ekim yerine Eylül'e yazılıyordu).
+
+Tarih filtresi de aynı şekilde: `shopify_api._gun_siniri()` günün Türkiye
+saatiyle başını/sonunu UTC'ye çevirip sorguya koyar.
+
 ## Test etme
 
 GİB'in herkese açık test hesabı: kullanıcı kodu `33333301`, şifre `1`,
@@ -220,14 +285,27 @@ temizlenemeyebilir — mümkün olduğunca az taslak oluştur.
 - ETTN eşleştirmesi aynı anda başka bir oturumdan fatura kesilirse kayabilir;
   panel bu durumda uyarı veriyor ama isim bazlı doğrulama eklenebilir.
 - Panelde imzalanmış faturaların PDF'ini indirme yok (`gib.indirme_linki` hazır).
-- **Test veritabanını sıfırlamak:** `fatura-test.db` dosyasını sil. Test
-  ortamında imzalama çalışmadığı için oradaki taslaklar sonsuza kadar
-  "bekliyor" görünür; gerçek kayıtlar `fatura.db`'de, etkilenmez.
+- **`fatura-test.db` dosyasını SİLME — kurulu uygulamada gerçek kayıtlar
+  orada.** `gib_test_modu` varsayılanı True ve arayüzde artık düğmesi yok,
+  bu yüzden Hepsiburada akışının bütün kayıtları (belge geçmişi ve sayaç
+  dahil) `fatura-test.db`'ye yazılıyor; `fatura.db` eski ve boşa yakın.
+  Ad yanıltıcı; dosyayı `fatura.db`'ye taşımak yapılacaklar listesinde.
 
 ## Masaüstü uygulaması (21.08.2026'da eklendi)
 
-**Uygulamayı Simay kullanacak, Berke değil.** Teknik olmayan bir kullanıcı
-varsayımıyla tasarlandı: `.bat` yok, konsol yok, dosya düzenlemek yok.
+**Uygulamayı yalnızca Berke kullanıyor** (12.10.2026; başta Simay için
+tasarlanmıştı). Yine de `.bat` yok, konsol yok, dosya düzenlemek yok;
+arayüz metinleri kısa ve sade kalır.
+
+Kurulu kopya `%LOCALAPPDATA%\Programs\Magicland Fatura\` altında; veritabanı,
+ayarlar, `faturalar/` ve günlükler de orada (.exe'nin yanı).
+
+**Tek kopya çalışır** (`tek_ornek.kilidi_al()`): açılış birkaç saniye
+sürdüğü için simgeye ikinci tıklama ikinci bir uygulama açıyordu. İkinci
+kopya artık açık pencereyi öne getirip çıkar. Kilit duruyor ama 15 sn
+içinde pencere çıkmıyorsa önceki kopya takılmış sayılır ve açılış devam
+eder — güncelleme sonrası "kapat-aç" sırasında kullanıcı uygulamasız
+kalmasın diye.
 
 - **Kabuk:** `masaustu.py` — uvicorn'u arka planda **boş bir portta** açar
   (8787 sabit değil; dolu olabilir), pywebview penceresinde gösterir.
@@ -305,8 +383,7 @@ yayımcı" diyecek. Kod imzalama sertifikası alınmadıkça bu sürecek.
 Mali müşavir, **birikmiş geçmiş siparişlerin bugünün tarihiyle** kesilmesini
 istedi; bundan sonrakiler siparişin kendi tarihiyle gidiyor. Bu yüzden
 önizleme ekranında "Fatura tarihi: Siparişin kendi tarihi / Bugün" seçimi var
-(`TaslakIstegi.bugun_tarihli`, `ubl_fatura(belge_tarihi=..., belge_saati=...)`,
-`xml_uret.py --bugun`).
+(`TaslakIstegi.bugun_tarihli`, `ubl_fatura(belge_tarihi=..., belge_saati=...)`).
 
 **Faturadaki iki tarih daima aynı olur** — `IssueDate` ve
 `OrderReference/IssueDate`. Kullanıcının portalda kestiği mevcut faturalarda
@@ -315,10 +392,11 @@ ait olduğu `OrderReference/ID`'deki sipariş numarasından belli.
 
 ## Yanlış kesilen faturayı geri alma
 
-`/api/faturayi-geri-al`: yerel kaydı siler ve Shopify'daki `faturalandi`
-etiketini kaldırır (`tagsRemove`). Sipariş yeniden "bekliyor" olur ve **yeni
-belge numarası + yeni ETTN** ile tekrar üretilir — portal aynı UUID'yi ikinci
-kez kabul etmiyor.
+`/api/faturayi-geri-al`: Shopify'daki `faturalandi` etiketini kaldırır
+(`tagsRemove`) ve belgeyi geçmişte `iptal` yapar (`depo.geri_al`). Sipariş
+yeniden "bekliyor" olur ve **yeni belge numarası + yeni ETTN** ile tekrar
+üretilir — portal aynı UUID'yi ikinci kez kabul etmiyor; eski numara da bir
+daha verilmez.
 
 Panelde faturalanmış satırlar seçilebilir ama "Gözden Geçir" onlar için
 kapalı; yalnızca "Faturayı Geri Al" çalışır.
@@ -345,7 +423,19 @@ dosyaları **zaman zaman görünmez oldu**: uygulamanın açılış günlüğü
 yok, kontrollü klasör erişimi kapalı, OneDrive çalışmıyor — sebep
 bulunamadı, bu makineye özgü bir şey.
 
-Bu yüzden `config.ayar_konumlari()` iki yer döner: **.exe'nin yanı**
+**Büyük olasılıkla açıklaması (12.10.2026):** Claude masaüstü uygulaması
+MSIX paketi; Claude oturumundan başlatılan her süreç `%APPDATA%` altını kendi
+özel kopyasına yönlendirilmiş görüyor
+(`%LOCALAPPDATA%\Packages\Claude_…\LocalCache\Roaming\Magicland Fatura`).
+Oturumdan yazılan ayar dosyasını Gezgin'den açılan uygulama görmez, tersi de
+geçerli: aynı yolda oturum `sira=80`, gerçek uygulama `sira=182` görüyordu.
+Yani dosya "kaybolmuyordu"; iki süreç farklı dosyaya bakıyordu. **Claude
+oturumundan `%APPDATA%`'ya ya da kurulum klasörüne yazarak test etme** —
+gerçek uygulama onu görmez. Kurulum klasörünü salt-okunur oku, denemeleri
+yalıtılmış bir klasörde yap (`config.ayar_konumlari`'nı geçici olarak
+değiştirerek).
+
+`config.ayar_konumlari()` iki yer döner: **.exe'nin yanı**
 (birincil, veritabanı da orada) ve **APPDATA** (ikincil). `kaydet()` her
 ikisine de yazar, `yeniden_yukle()` dördüne birden bakar
 (ayarlar + yedek × 2 konum) ve dolu olan ilkini alır.
@@ -358,21 +448,33 @@ Ek korumalar:
 - `baslangic.log`: her açılışta hangi konumda ne bulunduğu yazılır.
   Yine olursa **önce buraya bak**.
 
-## Panel akışı — taslaklar "kaybolmaz"
+## Panel akışı — üretilip işaretlenmemiş faturalar (12.10.2026)
 
-Taslak oluşturulunca satırlar 1. adım tablosundan düşer (aynı siparişe ikinci
-kez fatura kesilmesin diye; `depo.islenmis_idler()` de onları bir daha
-listelemez). Eskiden bu yüzden **ekranda hiçbir iz kalmıyordu**: `ciz()` liste
-boşalınca 2. ve 3. adım kartını da gizliyordu ve kullanıcı faturaların nereye
-gittiğini göremiyordu. `/api/gecmis` ucu vardı ama arayüz onu hiç çağırmıyordu.
+XML'i üretilmiş ama "faturalandı" diye işaretlenmemiş sipariş yerelde
+`faturalar.durum='taslak'`, listede **"XML üretildi"** rozetiyle görünür.
+Shopify'da henüz etiketi olmadığı için sipariş sorgusundan dönmeye devam
+eder.
 
-Şimdi 2. ve 3. adım arasında **"Bekleyen taslaklar"** kutusu var
-(`/api/bekleyenler` → `depo.bekleyen_taslaklar()`); açılışta, taslak
-oluşturunca ve imzalayınca tazeleniyor. `kartGorunurlugu()` bekleyen taslak
-varken işlem kartını açık tutuyor.
+Eskiden bu satırlar da kendiliğinden seçiliyordu ve listeden "işaretle"
+demenin yolu yoktu: 3. adımı işaretlemeden kapatan kullanıcının tek çıkışı
+aynı siparişi yeni numarayla yeniden üretmekti (165–173 böyle yandı).
+GİB dönemindeki "Bekleyen taslaklar" kutusu Hepsiburada geçişinde
+arayüzden düşmüş, yalnız `/api/bekleyenler` ucu kalmıştı.
 
-Taslaklar iki yerde durur: GİB portalında `onayDurumu="Onaylanmadı"` olarak,
-ve yerel SQLite'ta `durum='taslak'` olarak. ETTN ikisini bağlar.
+Şimdi:
+
+- Liste ekranının başında **"N fatura işaretlenmeyi bekliyor"** kutusu var
+  (`bekleyenleriYukle()`): açılışta, her "Siparişleri Getir"de ve her
+  işaretleme/vazgeçmeden sonra tazelenir. İki eylem: "Portala Yükledim,
+  İşaretle" ve "Vazgeç" (belge `iptal`, sipariş yeniden faturalanabilir).
+- **Kendiliğinden yalnızca "faturalanmadı" satırları seçilir**
+  (`kendiligindenSecilir`). "Faturalananları da göster" açıkken hepsinin
+  seçili gelmesi "N Faturayı Geri Al" düğmesini hepsi için hazır tutuyordu.
+- "XML üretildi" satırı elle seçilip gözden geçirilirse **onay sorulur**;
+  devam edilirse eski belge `iptal` olur, yeni numara verilir.
+- İşaretleme ve vazgeçme 5'erli parçalar halinde gönderilir
+  (`parcaliGonder`), ilerleme çubuğu "12 / 80" diye gerçek ilerlemeyi
+  gösterir.
 
 ## Windows notları
 

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from decimal import ROUND_HALF_UP, Decimal
 
 from . import config
@@ -45,7 +46,35 @@ PLAKA_IL = {
     "81": "Düzce",
 }
 
-ILLER = {ad.casefold(): ad for ad in PLAKA_IL.values()}
+_HARFLER = str.maketrans("çğıöşüÇĞİÖŞÜI", "cgiosucgiosui")
+
+
+def duz(metin: str | None) -> str:
+    """Karşılaştırma için sadeleştirir: 'Istanbul', 'İSTANBUL', 'istanbul' aynı çıkar.
+
+    Shopify bazı illeri Türkçe harfsiz gönderiyor ('Istanbul', 'Izmir').
+    casefold() İ/ı ayrımını koruduğu için bunlar il olarak tanınmıyor,
+    ilçe sanılıp faturaya ilçe diye yazılıyordu.
+    """
+    return (metin or "").translate(_HARFLER).casefold().replace("̇", "").strip()
+
+
+ILLER = {duz(ad): ad for ad in PLAKA_IL.values()}
+
+
+def yerel_zaman(ham: str | None) -> datetime | None:
+    """Shopify'ın UTC verdiği zamanı Türkiye saatine çevirir.
+
+    Çevrilmeden kullanıldığında gece 00:00-03:00 arası verilen siparişlerin
+    faturası bir gün önceye, ay başındakiler önceki aya düşüyordu.
+    """
+    try:
+        zaman = datetime.fromisoformat((ham or "").replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if zaman.tzinfo is None:
+        zaman = zaman.replace(tzinfo=timezone.utc)
+    return zaman.astimezone(config.TURKIYE)
 
 
 def kurusa(deger: Decimal) -> Decimal:
@@ -152,6 +181,7 @@ class Fatura:
     kalemler: list[Kalem]
     tahsil_edilen: Decimal    # Shopify'ın gerçekte tahsil ettiği tutar
     uyarilar: list[str] = field(default_factory=list)
+    zaman: str = ""           # sipariş zamanı, YYYY-AA-GGTss:dd:ss (sıralama için)
 
     @property
     def matrah(self) -> Decimal:
@@ -196,15 +226,15 @@ def _alici_cikar(siparis: dict) -> tuple[Alici, list[str]]:
     if len(posta) >= 2:
         sehir = PLAKA_IL.get(posta[:2], "")
     if not sehir and il_ham:
-        sehir = ILLER.get(il_ham.casefold(), il_ham)
+        sehir = ILLER.get(duz(il_ham), il_ham)
     if not sehir and sehir_ham:
-        sehir = ILLER.get(sehir_ham.casefold(), "")
+        sehir = ILLER.get(duz(sehir_ham), "")
 
     # city il değilse ilçedir (ör. "Milas" -> Muğla ili, Milas ilçesi).
     ilce = ""
-    if sehir_ham and sehir_ham.casefold() != sehir.casefold():
+    if sehir_ham and duz(sehir_ham) != duz(sehir):
         ilce = sehir_ham
-    elif il_ham and il_ham.casefold() != sehir.casefold():
+    elif il_ham and duz(il_ham) != duz(sehir):
         ilce = il_ham
 
     if not sehir:
@@ -315,23 +345,18 @@ def siparisi_faturaya_cevir(siparis: dict, kdv_orani: int | None = None) -> Fatu
     alici, alici_uyari = _alici_cikar(siparis)
     kalemler, kalem_uyari = _kalemleri_cikar(siparis, kdv_orani)
 
-    olusturma = siparis.get("createdAt", "")
-    tarih, saat = "", ""
-    kalip = re.match(r"(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})", olusturma)
-    if kalip:
-        yil, ay, gun, ss, dd, sn = kalip.groups()
-        tarih = f"{gun}/{ay}/{yil}"
-        saat = f"{ss}:{dd}:{sn}"
+    olusturma = yerel_zaman(siparis.get("createdAt"))
 
     fatura = Fatura(
         siparis_id=siparis.get("id", ""),
         siparis_no=siparis.get("name", ""),
-        tarih=tarih,
-        saat=saat,
+        tarih=olusturma.strftime("%d/%m/%Y") if olusturma else "",
+        saat=olusturma.strftime("%H:%M:%S") if olusturma else "",
         alici=alici,
         kalemler=kalemler,
         tahsil_edilen=para(siparis.get("currentTotalPriceSet")),
         uyarilar=alici_uyari + kalem_uyari,
+        zaman=olusturma.strftime("%Y-%m-%dT%H:%M:%S") if olusturma else "",
     )
 
     if fatura.sapma != SIFIR:

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import time
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 import httpx
 
@@ -84,6 +84,20 @@ def _tarih_dogrula(ham: str) -> str:
         return datetime.strptime(ham, "%Y-%m-%d").strftime("%Y-%m-%d")
     except ValueError:
         raise ShopifyHatasi(f"Tarih YYYY-AA-GG biçiminde olmalı: {ham!r}")
+
+
+def _gun_siniri(ham: str, gun_sonu: bool = False) -> str:
+    """Bir günün Türkiye saatiyle başını ya da sonunu UTC olarak verir.
+
+    Shopify zamanı UTC tutuyor. Sınır doğrudan UTC verildiğinde ayın ilk
+    üç saatindeki siparişler "bu ay" yerine "geçen ay"a düşüyordu.
+    """
+    an = datetime.strptime(_tarih_dogrula(ham), "%Y-%m-%d").replace(
+        tzinfo=config.TURKIYE
+    )
+    if gun_sonu:
+        an += timedelta(hours=23, minutes=59, seconds=59)
+    return an.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 class _TokenDeposu:
@@ -248,10 +262,10 @@ class Shopify:
         if durum:
             parcalar.append(durum)
         if baslangic:
-            parcalar.append(f"created_at:>={_tarih_dogrula(baslangic)}T00:00:00Z")
+            parcalar.append(f"created_at:>={_gun_siniri(baslangic)}")
         if bitis:
             # Bitiş günü dahil olsun diye günün sonuna kadar alınıyor.
-            parcalar.append(f"created_at:<={_tarih_dogrula(bitis)}T23:59:59Z")
+            parcalar.append(f"created_at:<={_gun_siniri(bitis, gun_sonu=True)}")
         sorgu = " AND ".join(parcalar)
 
         siparisler: list[dict] = []

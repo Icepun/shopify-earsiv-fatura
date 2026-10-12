@@ -18,7 +18,7 @@ import time
 import uvicorn
 import webview
 
-from fatura import config, guncelleme
+from fatura import config, guncelleme, tek_ornek
 from fatura.web import uygulama
 
 PENCERE_BASLIGI = f"{config.UYGULAMA_ADI}  {config.SURUM}"
@@ -82,6 +82,8 @@ def sunucuyu_bekle(port: int, saniye: float = 25.0) -> bool:
 
 
 def main() -> int:
+    if not tek_ornek.kilidi_al():
+        return 0
     guncelleme.acilisi_gunlukle()
     config.taniyi_gunlukle()
     # Bir önceki güncellemeden kalan .eski.exe varsa şimdi silinebilir.

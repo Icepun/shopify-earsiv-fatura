@@ -115,6 +115,11 @@ def ayarlar() -> dict:
         ad: ("" if ad in config.GIZLI_ALANLAR else deger)
         for ad, deger in ham.items()
     }
+    # Sıra ayar dosyasından değil sayaçtan okunuyor; ekrandaki değer her
+    # zaman en son verilen numara olsun.
+    duzenlenebilir["fatura_sira"] = depo.son_sira(
+        config.fatura_serisi(), datetime.now().year
+    )
     return {
         "magaza": config.SHOPIFY_STORE,
         "test_modu": config.GIB_TEST_MODU,
@@ -134,13 +139,32 @@ class AyarIstegi(BaseModel):
 
 @uygulama.post("/api/ayarlar")
 def ayarlari_kaydet(istek: AyarIstegi) -> dict:
-    config.kaydet(istek.ayarlar)
+    yeni = dict(istek.ayarlar)
+    # Sıra yalnızca kullanıcı elle değiştirdiyse gelir. Formdaki değer her
+    # kayıtta gönderilirken, fatura ürettikten sonra ayar kaydetmek sayacı
+    # geri sarıyor ve aynı numaralar ikinci kez veriliyordu.
+    istenen_sira = yeni.pop("fatura_sira", None)
+    if istenen_sira is not None:
+        try:
+            istenen_sira = max(0, int(str(istenen_sira).strip()))
+        except ValueError:
+            raise HTTPException(400, "Sıra bir sayı olmalı.")
+
+    config.kaydet(yeni)
 
     # Ayar değişince Shopify tokeni geçersiz olabilir, önbelleği bırakıyoruz.
     shopify_api._token_deposu.temizle()
     _durum.update({"siparisler": {}, "faturalar": {}})
     depo.hazirla()
-    return ayarlar()
+
+    sira_indirilemedi = False
+    if istenen_sira is not None:
+        gecerli = depo.sirayi_ayarla(
+            config.fatura_serisi(), datetime.now().year, istenen_sira
+        )
+        config.kaydet({"fatura_sira": gecerli})
+        sira_indirilemedi = gecerli != istenen_sira
+    return {**ayarlar(), "sira_indirilemedi": sira_indirilemedi}
 
 
 @uygulama.post("/api/baglanti-testi")
@@ -278,9 +302,10 @@ def onizleme(istek: TaslakIstegi) -> dict:
             raise HTTPException(400, "Sipariş bellekte yok, listeyi yenileyin.")
         _duzeltmeleri_uygula(fatura, istek.duzeltmeler.get(siparis_id, {}))
         satir = _fatura_sozlugu(fatura)
+        # İlçe burada aranmıyor: portal adresi yazıldığı gibi kabul ediyor,
+        # müşterilerin yarısından fazlası da ilçeyi ayrıca yazmıyor.
         satir["eksikler"] = [
             ad for ad, deger in (
-                ("ilçe", fatura.alici.ilce),
                 ("şehir", fatura.alici.sehir),
                 ("adres", fatura.alici.adres),
                 ("ad soyad", (fatura.alici.ad + fatura.alici.soyad)),
@@ -314,44 +339,79 @@ def xml_uret(istek: TaslakIstegi) -> dict:
             400, "Ayarlar'da satıcı bilgileri eksik: TCKN, ad ve vergi dairesi."
         )
 
-    satici = _satici_ayarlardan()
-    seri = ayar.get("fatura_seri", "MGL")
-    sira = int(ayar.get("fatura_sira", 0))
-    yil = datetime.now().year
-
-    klasor = (config.veri_klasoru() / "faturalar"
-              / datetime.now().strftime("%Y-%m-%d_%H%M"))
-    klasor.mkdir(parents=True, exist_ok=True)
-
-    uretilen = []
-    for siparis_id in istek.siparis_idler:
+    # Hiçbir şey üretmeden önce bütün seçimi sına: parti yarıda kalmasın.
+    secilen: list[Fatura] = []
+    kalemsiz: list[str] = []
+    for siparis_id in dict.fromkeys(istek.siparis_idler):
         fatura = _durum["faturalar"].get(siparis_id)
         if fatura is None:
-            continue
+            raise HTTPException(
+                400, "Sipariş listesi eskidi. Siparişleri yeniden getirin."
+            )
         _duzeltmeleri_uygula(fatura, istek.duzeltmeler.get(siparis_id, {}))
+        if not fatura.kalemler or fatura.toplam <= 0 or not fatura.tarih:
+            kalemsiz.append(fatura.siparis_no)
+        secilen.append(fatura)
+    if kalemsiz:
+        raise HTTPException(
+            400, "Faturalanacak tutarı olmayan sipariş var: " + ", ".join(kalemsiz)
+        )
+    if not secilen:
+        raise HTTPException(400, "Üretilecek fatura yok.")
 
-        sira += 1
-        belge_no = f"{seri}{yil}{sira:09d}"
+    # Numaralar eskiden yeniye verilir: belge numarası büyüdükçe fatura
+    # tarihi geriye gitmesin.
+    secilen.sort(key=lambda f: (f.zaman, f.siparis_no))
+
+    satici = _satici_ayarlardan()
+    seri = config.fatura_serisi()
+    simdi = datetime.now()
+
+    klasor = (config.veri_klasoru() / "faturalar"
+              / simdi.strftime("%Y-%m-%d_%H%M%S"))
+    klasor.mkdir(parents=True, exist_ok=True)
+
+    uretilen: list[dict] = []
+    hata_mesaji = ""
+    for fatura in secilen:
+        if istek.bugun_tarihli:
+            belge_tarihi = simdi.strftime("%Y-%m-%d")
+            belge_saati = simdi.strftime("%H:%M:%S")
+        else:
+            gun, ay, yil = fatura.tarih.split("/")
+            belge_tarihi, belge_saati = f"{yil}-{ay}-{gun}", ""
         ettn = str(uuid.uuid4())
-        simdi = datetime.now()
-        xml = ubl.ubl_fatura(
-            fatura, satici, belge_no=belge_no, ettn=ettn,
-            belge_tarihi=simdi.strftime("%Y-%m-%d") if istek.bugun_tarihli else "",
-            belge_saati=simdi.strftime("%H:%M:%S") if istek.bugun_tarihli else "",
-        )
-        ad = ubl.dosya_adi(satici.tckn, belge_no, ettn)
-        (klasor / ad).write_text(xml, encoding="utf-8")
+        yazilan: list[Path] = []
 
-        # Üretim anında kaydediyoruz: portal her ETTN'yi bir kez kabul ediyor,
-        # iz kalmazsa aynı siparişe ikinci fatura üretilebilir.
-        depo.kaydet(
-            siparis_id=siparis_id, siparis_no=fatura.siparis_no,
-            durum="taslak", ettn=ettn, tutar=f"{fatura.toplam:.2f}",
-            belge_no=belge_no,
-        )
+        def yaz(belge_no: str) -> str:
+            xml = ubl.ubl_fatura(
+                fatura, satici, belge_no=belge_no, ettn=ettn,
+                belge_tarihi=belge_tarihi, belge_saati=belge_saati,
+            )
+            ad = ubl.dosya_adi(satici.tckn, belge_no, ettn)
+            yazilan.append(klasor / ad)
+            (klasor / ad).write_text(xml, encoding="utf-8")
+            return ad
+
+        # Numara, dosya ve kayıt tek işlemde: portal her ETTN'yi bir kez
+        # kabul ediyor, iz kalmazsa aynı siparişe ikinci fatura üretilebilir.
+        # Numaradaki yıl fatura tarihinin yılıdır.
+        try:
+            kayit = depo.belge_uret(
+                seri=seri, yil=int(belge_tarihi[:4]),
+                siparis_id=fatura.siparis_id, siparis_no=fatura.siparis_no,
+                ettn=ettn, tutar=f"{fatura.toplam:.2f}",
+                fatura_tarihi=belge_tarihi, yaz=yaz,
+            )
+        except Exception as hata:  # disk, veritabanı ya da beklenmeyen veri
+            for yol in yazilan:
+                yol.unlink(missing_ok=True)
+            hata_mesaji = f"{fatura.siparis_no} üretilemedi: {hata}"
+            break
+
         uretilen.append({
-            "siparis_id": siparis_id, "siparis_no": fatura.siparis_no,
-            "belge_no": belge_no, "ettn": ettn, "dosya": ad,
+            "siparis_id": fatura.siparis_id, "siparis_no": fatura.siparis_no,
+            "belge_no": kayit["belge_no"], "ettn": ettn, "dosya": kayit["dosya"],
             "toplam": f"{fatura.toplam:.2f}",
             "fatura_tarihi": (simdi.strftime("%d/%m/%Y")
                               if istek.bugun_tarihli else fatura.tarih),
@@ -359,19 +419,28 @@ def xml_uret(istek: TaslakIstegi) -> dict:
         })
 
     if not uretilen:
-        raise HTTPException(400, "Üretilecek fatura yok, listeyi yenileyin.")
+        try:
+            klasor.rmdir()
+        except OSError:
+            pass
+        raise HTTPException(500, hata_mesaji or "Fatura üretilemedi.")
 
     zip_adi = f"faturalar_{len(uretilen)}_adet.zip"
     with zipfile.ZipFile(klasor / zip_adi, "w", zipfile.ZIP_DEFLATED) as z:
         for kayit in uretilen:
             z.write(klasor / kayit["dosya"], arcname=kayit["dosya"])
 
-    config.kaydet({"fatura_sira": sira})
+    # Ayar dosyasındaki sıra yedektir (bkz. config.ALANLAR > fatura_sira).
+    config.kaydet({"fatura_sira": depo.son_sira(seri, simdi.year)})
     return {
         "adet": len(uretilen),
         "klasor": str(klasor),
         "zip": zip_adi,
         "faturalar": uretilen,
+        # Parti yarıda kaldıysa: buraya kadar üretilenler geçerli, kalanlar
+        # üretilmedi ve numara almadı.
+        "hata": hata_mesaji,
+        "uretilmeyen": len(secilen) - len(uretilen),
     }
 
 
@@ -418,6 +487,7 @@ def isaretle(istek: IsaretIstegi) -> dict:
                 tutar=kayit.get("tutar") or "",
                 belge_no=kayit.get("belge_no") or "",
             )
+            depo.yuklendi_isaretle(siparis_id)
             basarili += 1
         except ShopifyHatasi as hata:
             hatalar.append(f"{siparis_no}: {hata}")
@@ -427,10 +497,11 @@ def isaretle(istek: IsaretIstegi) -> dict:
 
 @uygulama.get("/api/bekleyenler")
 def bekleyenler() -> dict:
-    """Taslağı oluşmuş ama henüz imzalanmamış faturalar.
+    """XML'i üretilmiş ama henüz "faturalandı" diye işaretlenmemiş siparişler.
 
-    Panel taslak oluşturduktan sonra satırları listeden düşürüyor; bu uç
-    olmadan kullanıcı faturaların nereye gittiğini göremiyordu.
+    Panel bunları açılışta ayrı bir kutuda gösteriyor. Kutu olmadan, 3. adımı
+    işaretlemeden kapatan kullanıcının tek yolu aynı siparişi yeni numarayla
+    yeniden üretmekti.
     """
     satirlar = [dict(satir) for satir in depo.bekleyen_taslaklar()]
     return {
@@ -442,24 +513,27 @@ def bekleyenler() -> dict:
 
 @uygulama.post("/api/faturayi-geri-al")
 def faturayi_geri_al(istek: IsaretIstegi) -> dict:
-    """Yanlış kesilen faturaları geri alır: kayıt silinir, etiket kaldırılır.
+    """Yanlış kesilen faturaları geri alır: etiket kaldırılır, belge iptal olur.
 
     Sipariş yeniden "faturalanmamış" olur ve yeni belge numarası + yeni ETTN
-    ile tekrar üretilebilir. Portaldaki eski faturayı silmek kullanıcının
-    işi — bu uç yalnızca bizim tarafı temizler.
+    ile tekrar üretilebilir; eski belge geçmişte 'iptal' olarak kalır.
+    Portaldaki eski faturayı silmek kullanıcının işi — bu uç yalnızca bizim
+    tarafı temizler.
     """
     try:
         shopify = Shopify()
     except ShopifyHatasi as hata:
         raise HTTPException(400, str(hata))
 
+    kayitlar = {k["siparis_id"]: k for k in depo.gecmis(limit=2000)}
     geri_alinan, hatalar = 0, []
     for siparis_id in istek.siparis_idler:
         fatura = _durum["faturalar"].get(siparis_id)
-        no = fatura.siparis_no if fatura else siparis_id
+        no = (kayitlar.get(siparis_id) or {}).get("siparis_no") or (
+            fatura.siparis_no if fatura else siparis_id)
         try:
             shopify.faturalandi_etiketini_kaldir(siparis_id)
-            depo.sil(siparis_id)
+            depo.geri_al(siparis_id)
             geri_alinan += 1
         except ShopifyHatasi as hata:
             hatalar.append(f"{no}: {hata}")

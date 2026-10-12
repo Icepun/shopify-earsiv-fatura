@@ -51,7 +51,8 @@
   }
   td { padding: 10px; border-bottom: 1px solid var(--cizgi); vertical-align: top; }
   tr.secili td { background: color-mix(in srgb, var(--vurgu) 7%, transparent); }
-  tr.kapali td { opacity: .5; }
+  tr.kapali td { opacity: .55; }
+  tr.kapali:hover td { opacity: .85; }
   .sag { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
   .rozet {
     display: inline-block; font-size: 11px; font-weight: 600; padding: 2px 8px;
@@ -161,6 +162,17 @@
   .yuzde-cubuk > i { display: block; height: 100%; width: 0; border-radius: 999px;
                      background: var(--vurgu); transition: width .25s ease; }
 
+  /* ─── işaretlenmeyi bekleyen faturalar ─── */
+  .bekleyen {
+    border-color: var(--uyari);
+    background: color-mix(in srgb, var(--uyari) 7%, var(--kart));
+    animation: belir .3s cubic-bezier(.2,.7,.3,1) both;
+  }
+  .bekleyen table { margin-top: 12px; }
+  .bekleyen .yuzde-cubuk > i { background: var(--uyari); }
+  .ilerleme-yazi { font-size: 12px; color: var(--soluk); margin-top: 6px;
+                   font-variant-numeric: tabular-nums; }
+
   @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after {
       animation-duration: .01ms !important; animation-iteration-count: 1 !important;
@@ -195,6 +207,28 @@
 
   <!-- ═══ 1. ADIM: siparişler ═══ -->
   <div id="gorunum-liste">
+    <div class="kart bekleyen" id="bekleyen-kart" style="display:none">
+      <div class="satir">
+        <strong id="bekleyen-baslik"></strong>
+        <span id="bekleyen-ozet" class="kalem"></span>
+        <span style="flex:1"></span>
+        <button id="bekleyen-vazgec">Vazgeç</button>
+        <button class="birincil" id="bekleyen-isaretle">Portala Yükledim, İşaretle</button>
+      </div>
+      <div class="ipucu">Portala yüklediklerini işaretle. Yüklemediklerinden vazgeçersen yeniden faturalanabilirler.</div>
+      <div class="yuzde-cubuk" id="bekleyen-cubuk" style="display:none"><i></i></div>
+      <div class="ilerleme-yazi" id="bekleyen-ilerleme"></div>
+      <table>
+        <thead>
+          <tr>
+            <th style="width:34px"><input type="checkbox" id="bekleyen-hepsi" checked></th>
+            <th>Sipariş</th><th>Fatura No</th><th>Fatura tarihi</th><th class="sag">Tutar</th>
+          </tr>
+        </thead>
+        <tbody id="bekleyen-govde"></tbody>
+      </table>
+    </div>
+
     <div class="kart">
       <div class="satir">
         <div class="adim-no">1</div>
@@ -226,7 +260,7 @@
 
     <div class="kart" id="tablo-kart" style="display:none">
       <div class="satir" style="margin-bottom:12px">
-        <label style="font-size:13px"><input type="checkbox" id="hepsi"> Tümünü seç</label>
+        <label style="font-size:13px"><input type="checkbox" id="hepsi"> Faturalanmamışları seç</label>
         <span style="flex:1"></span>
         <span id="secim-ozet" class="kalem"></span>
         <button id="gizle" disabled>Seçilenleri Gizle</button>
@@ -293,6 +327,8 @@
         Dosyayı Hepsiburada e-Faturam &gt; Fatura &gt; Toplu Fatura Yükle &gt; XML ekranına bırak.
         Portalda onayladıktan sonra "İşaretle"ye bas; o siparişler bir daha listeye düşmez.
       </div>
+      <div class="yuzde-cubuk" id="isaretle-cubuk" style="display:none"><i></i></div>
+      <div class="ilerleme-yazi" id="isaretle-ilerleme"></div>
     </div>
     <div class="kart">
       <table>
@@ -445,14 +481,53 @@ function sayiAkit(el, bas, son, bicim, sure = 420) {
   requestAnimationFrame(adim);
 }
 
+/** Uzun listeyi küçük parçalar halinde gönderir; her parçadan sonra ilerlemeyi bildirir. */
+async function parcaliGonder(yol, idler, sayacAlani, ilerleme) {
+  let tamam = 0;
+  const hatalar = [];
+  for (let i = 0; i < idler.length; i += 5) {
+    const veri = await cagir(yol, {
+      method: "POST", body: JSON.stringify({ siparis_idler: idler.slice(i, i + 5) }),
+    });
+    tamam += veri[sayacAlani] || 0;
+    hatalar.push(...(veri.hatalar || []));
+    ilerleme(Math.min(i + 5, idler.length), idler.length);
+  }
+  return { tamam, hatalar };
+}
+
+/** Yüzdeli ilerleme çubuğu ve yanında "12 / 80" yazısı. */
+function ilerlemeCubugu(cubukSecici, yaziSecici) {
+  const cubuk = $(cubukSecici), yazi = $(yaziSecici);
+  return {
+    baslat(toplam) {
+      cubuk.style.display = "block";
+      cubuk.firstElementChild.style.width = "0%";
+      yazi.textContent = `0 / ${toplam}`;
+    },
+    guncelle(biten, toplam) {
+      cubuk.firstElementChild.style.width = (biten * 100 / toplam) + "%";
+      yazi.textContent = `${biten} / ${toplam}`;
+    },
+    bitir() {
+      setTimeout(() => { cubuk.style.display = "none"; yazi.textContent = ""; }, 700);
+    },
+  };
+}
+
 // ─── 1. adım: liste ──────────────────────────────────────────────
 
 const DURUMLAR = {
-  bekliyor:     ['<span class="rozet r-bos">faturalanmadı</span>', true],
-  xml_uretildi: ['<span class="rozet r-uyari">XML üretildi</span>', true],
-  faturalandi:  ['<span class="rozet r-iyi">faturalandı</span>', true],
-  gizli:        ['<span class="rozet r-bos">gizli</span>', true],
+  bekliyor:     '<span class="rozet r-bos">faturalanmadı</span>',
+  xml_uretildi: '<span class="rozet r-uyari">XML üretildi</span>',
+  faturalandi:  '<span class="rozet r-iyi">faturalandı</span>',
+  gizli:        '<span class="rozet r-bos">gizli</span>',
 };
+
+// Kendiliğinden yalnızca faturalanmamışlar seçilir. Hepsi seçilirken XML'i
+// üretilmiş siparişler fark edilmeden yeniden üretiliyor, faturalanmışlar da
+// tek tıkla geri alınabilir halde bekliyordu.
+const kendiligindenSecilir = (f) => f.durum === "bekliyor";
 
 function ciz() {
   const govde = $("#govde");
@@ -461,11 +536,11 @@ function ciz() {
   if (!faturalar.length) { secimOzeti(); return; }
 
   faturalar.forEach((f, sira) => {
-    const [rozet, secilebilir] = DURUMLAR[f.durum] || DURUMLAR.bekliyor;
+    const rozet = DURUMLAR[f.durum] || DURUMLAR.bekliyor;
     const tr = document.createElement("tr");
     tr.style.animationDelay = Math.min(sira * 18, 400) + "ms";
-    if (secili.has(f.siparis_id)) tr.className = "secili";
-    else if (!secilebilir) tr.className = "kapali";
+    if (!kendiligindenSecilir(f)) tr.dataset.soluk = "1";
+    tr.className = secili.has(f.siparis_id) ? "secili" : (tr.dataset.soluk ? "kapali" : "");
 
     const kalemler = f.kalemler
       .map((k) => `${k.miktar}× ${kacis(k.ad)} <span class="sag">${k.dahil} ₺</span>`).join("<br>");
@@ -474,9 +549,7 @@ function ciz() {
       + (f.belge_no ? `<span class="rozet r-bos">${kacis(f.belge_no)}</span>` : "");
 
     tr.innerHTML = `
-      <td>${secilebilir
-        ? `<input type="checkbox" data-sec="${f.siparis_id}" ${secili.has(f.siparis_id) ? "checked" : ""}>`
-        : ""}</td>
+      <td><input type="checkbox" data-sec="${f.siparis_id}" ${secili.has(f.siparis_id) ? "checked" : ""}></td>
       <td><strong>${kacis(f.siparis_no)}</strong><br><span class="kalem">${f.tarih}</span></td>
       <td>${rozet}</td>
       <td>${kacis(f.alici.unvan || (f.alici.ad + " " + f.alici.soyad))}<br>
@@ -511,16 +584,109 @@ document.addEventListener("click", (olay) => {
   const sec = olay.target.dataset?.sec;
   if (!sec) return;
   olay.target.checked ? secili.add(sec) : secili.delete(sec);
-  olay.target.closest("tr").className = olay.target.checked ? "secili" : "";
+  const tr = olay.target.closest("tr");
+  tr.className = olay.target.checked ? "secili" : (tr.dataset.soluk ? "kapali" : "");
   secimOzeti();
 });
 
 $("#hepsi").addEventListener("change", (olay) => {
   secili.clear();
   if (olay.target.checked)
-    faturalar.filter((f) => (DURUMLAR[f.durum] || DURUMLAR.bekliyor)[1])
-             .forEach((f) => secili.add(f.siparis_id));
+    faturalar.filter(kendiligindenSecilir).forEach((f) => secili.add(f.siparis_id));
   ciz();
+});
+
+// ─── işaretlenmeyi bekleyen faturalar ────────────────────────────
+
+let bekleyenler = [];
+const bekleyenSecili = new Set();
+let sonBekleyenToplam = 0;
+
+const tarihTr = (iso) => iso ? iso.split("-").reverse().join("/") : "";
+
+async function bekleyenleriYukle() {
+  try {
+    const veri = await cagir("/api/bekleyenler");
+    bekleyenler = veri.taslaklar;
+    bekleyenSecili.clear();
+    bekleyenler.forEach((b) => bekleyenSecili.add(b.siparis_id));
+    $("#bekleyen-hepsi").checked = true;
+    bekleyenCiz();
+  } catch (h) { mesaj(h.message, "hata"); }
+}
+
+function bekleyenCiz() {
+  $("#bekleyen-kart").style.display = bekleyenler.length ? "" : "none";
+  $("#bekleyen-govde").innerHTML = bekleyenler.map((b, sira) => `
+    <tr style="animation-delay:${Math.min(sira * 18, 400)}ms">
+      <td><input type="checkbox" data-bekleyen="${b.siparis_id}" ${bekleyenSecili.has(b.siparis_id) ? "checked" : ""}></td>
+      <td><strong>${kacis(b.siparis_no)}</strong></td>
+      <td>${kacis(b.belge_no || "")}</td>
+      <td>${kacis(tarihTr(b.fatura_tarihi))}</td>
+      <td class="sag">${kacis(b.tutar || "")} ₺</td>
+    </tr>`).join("");
+  bekleyenOzeti();
+}
+
+function bekleyenOzeti() {
+  const secilenler = bekleyenler.filter((b) => bekleyenSecili.has(b.siparis_id));
+  const toplam = secilenler.reduce((t, b) => t + (parseFloat(b.tutar) || 0), 0);
+  $("#bekleyen-baslik").textContent = bekleyenler.length === 1
+    ? "1 fatura işaretlenmeyi bekliyor"
+    : `${bekleyenler.length} fatura işaretlenmeyi bekliyor`;
+  sayiAkit($("#bekleyen-ozet"), sonBekleyenToplam, toplam,
+    (v) => secilenler.length ? `${secilenler.length} seçili · ${v.toFixed(2)} ₺` : "Hiçbiri seçili değil");
+  sonBekleyenToplam = toplam;
+  $("#bekleyen-isaretle").disabled = $("#bekleyen-vazgec").disabled = !secilenler.length;
+}
+
+document.addEventListener("click", (olay) => {
+  const id = olay.target.dataset?.bekleyen;
+  if (!id) return;
+  olay.target.checked ? bekleyenSecili.add(id) : bekleyenSecili.delete(id);
+  bekleyenOzeti();
+});
+
+$("#bekleyen-hepsi").addEventListener("change", (olay) => {
+  bekleyenSecili.clear();
+  if (olay.target.checked) bekleyenler.forEach((b) => bekleyenSecili.add(b.siparis_id));
+  bekleyenCiz();
+});
+
+/** Bekleyen kutusundaki iki düğmenin ortak akışı: parça parça gönder, ilerlemeyi göster. */
+async function bekleyenIslemi(dugme, calisirken, yol, sayacAlani, bitince) {
+  const idler = bekleyenler.filter((b) => bekleyenSecili.has(b.siparis_id)).map((b) => b.siparis_id);
+  if (!idler.length) return;
+  const etiket = dugme.textContent;
+  const cubuk = ilerlemeCubugu("#bekleyen-cubuk", "#bekleyen-ilerleme");
+  $("#bekleyen-isaretle").disabled = $("#bekleyen-vazgec").disabled = true;
+  dugme.textContent = calisirken;
+  cubuk.baslat(idler.length);
+  try {
+    const sonuc = await parcaliGonder(yol, idler, sayacAlani, cubuk.guncelle);
+    mesaj(bitince(sonuc.tamam), sonuc.hatalar.length ? "uyari" : "iyi");
+    sonuc.hatalar.forEach((h) => mesaj(h, "hata"));
+  } catch (h) { mesaj(h.message, "hata"); }
+  cubuk.bitir();
+  dugme.textContent = etiket;
+  bekleyenOzeti();
+  // Liste açıksa onu da tazele; "Getir" bekleyenleri kendisi yeniden yükler.
+  if (faturalar.length) $("#getir").click(); else await bekleyenleriYukle();
+}
+
+$("#bekleyen-isaretle").addEventListener("click", () => {
+  const adet = bekleyenler.filter((b) => bekleyenSecili.has(b.siparis_id)).length;
+  if (!confirm(`${adet} sipariş "faturalandı" olarak işaretlenecek. Portala yükleyip onayladın mı?`)) return;
+  bekleyenIslemi($("#bekleyen-isaretle"), "İşaretleniyor…", "/api/isaretle", "isaretlenen",
+    (n) => `${n} sipariş işaretlendi.`);
+});
+
+$("#bekleyen-vazgec").addEventListener("click", () => {
+  const adet = bekleyenler.filter((b) => bekleyenSecili.has(b.siparis_id)).length;
+  if (!confirm(`${adet} faturadan vazgeçilecek; siparişler yeniden faturalanabilir olacak.\n\n` +
+    "Portala yüklediysen önce oradan sil. Devam?")) return;
+  bekleyenIslemi($("#bekleyen-vazgec"), "Vazgeçiliyor…", "/api/faturayi-geri-al", "geri_alinan",
+    (n) => `${n} faturadan vazgeçildi, siparişler yeniden faturalanabilir.`);
 });
 
 // ─── tarih aralığı ───────────────────────────────────────────────
@@ -557,8 +723,7 @@ $("#getir").addEventListener("click", async () => {
     const veri = await cagir("/api/siparisler?" + sorgu.toString());
     faturalar = veri.faturalar;
     secili.clear();
-    faturalar.filter((f) => (DURUMLAR[f.durum] || DURUMLAR.bekliyor)[1])
-             .forEach((f) => secili.add(f.siparis_id));
+    faturalar.filter(kendiligindenSecilir).forEach((f) => secili.add(f.siparis_id));
     $("#hepsi").checked = secili.size > 0;
     $("#ozet").textContent = veri.adet
       ? `${veri.adet} sipariş · ${veri.bekleyen} tanesi faturalanmamış`
@@ -571,6 +736,7 @@ $("#getir").addEventListener("click", async () => {
     sonToplam = 0;
     ciz();
   } catch (h) { mesaj(h.message, "hata"); }
+  bekleyenleriYukle();
   surec("#surec-getir", false);
   dugme.disabled = false; dugme.textContent = "Siparişleri Getir";
 });
@@ -597,9 +763,9 @@ function onizlemeCiz() {
     kutu.style.animationDelay = Math.min(sira * 25, 400) + "ms";
 
     const alanlar = ALICI_ALANLARI.map(([anahtar, etiket]) => {
-      const eksikMi = (anahtar === "ilce" && eksik.has("ilçe"))
-        || (anahtar === "sehir" && eksik.has("şehir"))
-        || (anahtar === "adres" && eksik.has("adres"));
+      const eksikMi = (anahtar === "sehir" && eksik.has("şehir"))
+        || (anahtar === "adres" && eksik.has("adres"))
+        || ((anahtar === "ad" || anahtar === "soyad") && eksik.has("ad soyad"));
       return `<div><label>${etiket}</label>
         <input class="${eksikMi ? "eksik" : ""}" data-id="${f.siparis_id}" data-alan="${anahtar}"
                value="${kacis(f.alici[anahtar])}"></div>`;
@@ -667,6 +833,12 @@ document.addEventListener("input", (olay) => {
 $("#gozden-gecir").addEventListener("click", async () => {
   const idler = faturalar.filter((f) => secili.has(f.siparis_id)).map((f) => f.siparis_id);
   if (!idler.length) return;
+  const uretilmis = faturalar.filter((f) => secili.has(f.siparis_id) && f.durum === "xml_uretildi");
+  if (uretilmis.length && !confirm(
+    `${uretilmis.length} siparişin faturası zaten üretildi:\n` +
+    `${uretilmis.map((f) => f.belge_no || f.siparis_no).join(", ")}\n\n` +
+    "Yeniden üretirsen yeni numara alırlar, eskileri geçersiz olur. " +
+    "Eskisini portala yüklediysen önce oradan sil. Devam?")) return;
   const dugme = $("#gozden-gecir");
   dugme.disabled = true;
   try {
@@ -751,6 +923,8 @@ $("#xml-olustur").addEventListener("click", async () => {
       }),
     });
     sonSonuc = veri;
+    $("#isaretle").disabled = false;
+    $("#isaretle").textContent = "Portala Yükledim, İşaretle";
     $("#sonuc-baslik").textContent = `${veri.adet} fatura hazır — ${veri.zip}`;
     $("#sonuc-govde").innerHTML = veri.faturalar.map((f) => `
       <tr><td><strong>${kacis(f.siparis_no)}</strong></td>
@@ -760,6 +934,8 @@ $("#xml-olustur").addEventListener("click", async () => {
       <td class="kalem">${kacis(f.dosya)}</td></tr>`).join("");
     gorunum("sonuc");
     mesaj(`${veri.adet} XML oluşturuldu.`, "iyi");
+    if (veri.hata)
+      mesaj(`${veri.hata} — kalan ${veri.uretilmeyen} sipariş üretilmedi, yeniden deneyebilirsin.`, "hata");
   } catch (h) { mesaj(h.message, "hata"); }
   surec("#surec-xml", false);
   dugme.disabled = false; dugme.textContent = "XML Oluştur";
@@ -777,16 +953,22 @@ $("#isaretle").addEventListener("click", async () => {
   if (!sonSonuc) return;
   if (!confirm(`${sonSonuc.adet} sipariş "faturalandı" olarak işaretlenecek. Portala yükleyip onayladın mı?`)) return;
   const dugme = $("#isaretle");
+  const idler = sonSonuc.faturalar.map((f) => f.siparis_id);
+  const cubuk = ilerlemeCubugu("#isaretle-cubuk", "#isaretle-ilerleme");
   dugme.disabled = true; dugme.textContent = "İşaretleniyor…";
+  cubuk.baslat(idler.length);
+  let bitti = false;
   try {
-    const veri = await cagir("/api/isaretle", {
-      method: "POST",
-      body: JSON.stringify({ siparis_idler: sonSonuc.faturalar.map((f) => f.siparis_id) }),
-    });
-    mesaj(`${veri.isaretlenen} sipariş işaretlendi.`, veri.hatalar.length ? "uyari" : "iyi");
-    veri.hatalar.forEach((h) => mesaj(h, "hata"));
+    const sonuc = await parcaliGonder("/api/isaretle", idler, "isaretlenen", cubuk.guncelle);
+    mesaj(`${sonuc.tamam} sipariş işaretlendi.`, sonuc.hatalar.length ? "uyari" : "iyi");
+    sonuc.hatalar.forEach((h) => mesaj(h, "hata"));
+    bitti = !sonuc.hatalar.length;
   } catch (h) { mesaj(h.message, "hata"); }
-  dugme.disabled = false; dugme.textContent = "Portala Yükledim, İşaretle";
+  cubuk.bitir();
+  // Hepsi işaretlendiyse düğme kapalı kalır; yarım kaldıysa yeniden denenebilir.
+  dugme.disabled = bitti;
+  dugme.textContent = bitti ? "İşaretlendi" : "Portala Yükledim, İşaretle";
+  bekleyenleriYukle();
 });
 
 $("#sonuc-yeni").addEventListener("click", () => {
@@ -809,24 +991,29 @@ const AYAR_ALANLARI = {
 };
 
 let ayarlarYuklendi = false;
+// Formdaki sıra, yüklendiği andaki değerle karşılaştırılır; yalnızca elle
+// değiştirildiyse gönderilir.
+let yuklenenSira = "";
 
 function ayarDugmeleri(acik) {
   $("#a-kaydet").disabled = !acik;
   $("#a-sina").disabled = !acik;
 }
 
-async function ayarlariYukle({ ilk = false } = {}) {
+/** sessiz: yalnızca formu tazeler; mesaj göstermez, tarih ve sürüm rozetine dokunmaz. */
+async function ayarlariYukle({ ilk = false, sessiz = false } = {}) {
   try {
     const a = await cagir("/api/ayarlar");
     yerelSurum = a.surum;
-    surumRozeti("sade");
+    if (!sessiz) surumRozeti("sade");
     $("#altbaslik").textContent = a.magaza
       ? `${a.magaza} · KDV %${a.kdv_orani} · Hepsiburada e-Faturam için XML üretir`
       : "Başlamak için Ayarlar'ı doldurun.";
 
     const d = a.duzenlenebilir || {};
     for (const [se, anahtar] of Object.entries(AYAR_ALANLARI)) $(se).value = d[anahtar] || "";
-    $("#a-sira").value = d.fatura_sira ?? 0;
+    yuklenenSira = String(d.fatura_sira ?? 0);
+    $("#a-sira").value = yuklenenSira;
     $("#a-kdv").value = a.kdv_orani;
     $("#a-kargo").checked = !!a.kargoyu_dagit;
     $("#a-gizli-kayitli").innerHTML = (a.dolu_gizliler || {}).shopify_gizli_anahtar
@@ -836,6 +1023,7 @@ async function ayarlariYukle({ ilk = false } = {}) {
     // formu kaydetmek bütün ayarları siliyordu.
     ayarlarYuklendi = true;
     ayarDugmeleri(true);
+    if (sessiz) return;
 
     if (a.baslangic_tarihi) $("#baslangic").value = a.baslangic_tarihi;
     if (a.eksik_ayarlar.length) {
@@ -848,7 +1036,7 @@ async function ayarlariYukle({ ilk = false } = {}) {
 function ayarFormu() {
   const gonder = { shopify_gizli_anahtar: $("#a-gizli").value };
   for (const [se, anahtar] of Object.entries(AYAR_ALANLARI)) gonder[anahtar] = $(se).value;
-  gonder.fatura_sira = $("#a-sira").value;
+  if ($("#a-sira").value.trim() !== yuklenenSira) gonder.fatura_sira = $("#a-sira").value;
   gonder.kdv_orani = $("#a-kdv").value;
   gonder.kargoyu_dagit = $("#a-kargo").checked;
   return gonder;
@@ -865,6 +1053,9 @@ async function taniyiGoster() {
 
 $("#ayarlar-ac").addEventListener("click", () => {
   $("#ayarlar-ortu").classList.add("acik");
+  // Form her açılışta tazelenir; açılıştaki değerlerle kalırsa son fatura
+  // sırası eski görünür.
+  ayarlariYukle({ sessiz: true });
   taniyiGoster();
 });
 $("#a-kapat").addEventListener("click", () => {
@@ -882,11 +1073,13 @@ $("#a-kaydet").addEventListener("click", async () => {
   const dugme = $("#a-kaydet");
   dugme.disabled = true; dugme.textContent = "Kaydediliyor…";
   try {
-    await cagir("/api/ayarlar", { method: "POST", body: JSON.stringify({ ayarlar: ayarFormu() }) });
+    const sonuc = await cagir("/api/ayarlar", { method: "POST", body: JSON.stringify({ ayarlar: ayarFormu() }) });
     $("#a-gizli").value = "";
     $("#mesajlar").innerHTML = "";
     await ayarlariYukle();
     mesaj("Ayarlar kaydedildi.", "iyi");
+    if (sonuc.sira_indirilemedi)
+      mesaj("Sıra, daha önce verilmiş en büyük fatura numarasının altına inemez.", "uyari");
   } catch (h) { mesaj(h.message, "hata"); }
   dugme.disabled = false; dugme.textContent = "Kaydet";
 });
@@ -993,6 +1186,7 @@ $("#guncelleme-kur").addEventListener("click", async () => {
 });
 
 ayarlariYukle({ ilk: true });
+bekleyenleriYukle();
 guncellemeKontrol();
 </script>
 </body>
